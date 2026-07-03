@@ -96,7 +96,7 @@
     h2 { margin:0; font-size:13px; font-weight:750; text-transform:uppercase; color:#3b4657; }
     main {
       display:grid;
-      grid-template-columns:minmax(0, 1fr) 360px;
+      grid-template-columns:minmax(0, 1fr) minmax(520px, 36vw);
       gap:16px;
       height:calc(100vh - 60px);
       padding:16px;
@@ -110,7 +110,8 @@
     }
     .sidebar {
       display:grid;
-      grid-template-rows:auto auto auto minmax(0, 1fr);
+      grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows:auto minmax(0, 1fr);
       gap:12px;
       min-height:0;
       overflow:hidden;
@@ -178,6 +179,24 @@
       border-bottom:1px solid var(--line-soft);
     }
     .panel-body { padding:14px; overflow:auto; }
+    .latency-body {
+      display:grid;
+      grid-template-columns:180px minmax(0, 1fr);
+      align-items:start;
+      gap:12px 16px;
+    }
+    .latency-panel { grid-column:1 / -1; }
+    .latency-body .gauge { margin:0 auto; }
+    .latency-metrics { min-width:0; }
+    .profile-panel,
+    .enroll-panel {
+      display:grid;
+      grid-template-rows:auto minmax(0, 1fr);
+      min-height:0;
+      overflow:hidden;
+    }
+    .profile-panel .panel-body,
+    .enroll-panel .panel-body { min-height:0; }
     .transcript {
       display:flex;
       flex-direction:column;
@@ -346,6 +365,12 @@
       padding-top:12px;
       border-top:1px solid var(--line-soft);
     }
+    .latency-body .candidate-list {
+      grid-column:1 / -1;
+      max-height:118px;
+      overflow:auto;
+    }
+    .latency-body .candidate-list .empty { min-height:44px; padding:10px; }
     .candidate-row {
       display:grid;
       gap:5px;
@@ -382,42 +407,6 @@
     .candidate-meta {
       color:var(--quiet);
       font-size:11px;
-      font-variant-numeric:tabular-nums;
-    }
-    .turn-list {
-      display:grid;
-      gap:8px;
-      max-height:220px;
-      overflow:auto;
-    }
-    .turn-row {
-      display:grid;
-      grid-template-columns:auto minmax(0, 1fr) auto;
-      align-items:center;
-      gap:8px;
-      padding:8px 0;
-      border-bottom:1px solid var(--line-soft);
-      color:#273449;
-      font-size:12px;
-    }
-    .turn-row:last-child { border-bottom:0; }
-    .turn-dot {
-      width:9px;
-      height:9px;
-      border-radius:50%;
-      background:#a8b3c3;
-    }
-    .turn-row.known .turn-dot { background:var(--accent); }
-    .turn-row.overlap .turn-dot { background:var(--warn); }
-    .turn-name {
-      min-width:0;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-      font-weight:750;
-    }
-    .turn-time {
-      color:var(--quiet);
       font-variant-numeric:tabular-nums;
     }
     .value {
@@ -488,10 +477,12 @@
       gap:8px;
     }
     .enroll-actions .primary { grid-column:1 / -1; }
-    @media (max-width:1000px) {
+    @media (max-width:1180px) {
       main { grid-template-columns:1fr; height:auto; min-height:calc(100vh - 60px); }
       .workspace { min-height:620px; }
-      .sidebar { overflow:visible; }
+      .sidebar { grid-template-columns:1fr; grid-template-rows:auto; overflow:visible; }
+      .latency-panel { grid-column:auto; }
+      .latency-body { grid-template-columns:1fr; }
     }
     @media (max-width:720px) {
       header { align-items:flex-start; height:auto; padding:14px 16px; flex-direction:column; }
@@ -527,11 +518,11 @@
     </div>
   </section>
   <aside class="sidebar">
-    <div class="panel">
+    <div class="panel latency-panel">
       <div class="panel-header">
         <h2>Latency</h2>
       </div>
-      <div class="panel-body">
+      <div class="panel-body latency-body">
         <div class="gauge" aria-label="Realtime latency gauge">
           <svg class="gauge-arc" viewBox="0 0 180 104" aria-hidden="true" focusable="false">
             <defs>
@@ -549,25 +540,27 @@
           <div id="latencyGaugeValue" class="gauge-label">--</div>
           <div class="gauge-scale"><span>0</span><span>1000ms</span><span>2000ms+</span></div>
         </div>
-        <div class="metric"><span>E2E</span><span id="latency" class="value">--</span></div>
-        <div class="metric"><span>Audio received</span><span id="audioSeconds" class="value">--</span></div>
-        <div class="metric"><span>Speaker</span><span id="speaker" class="value">unknown</span></div>
-        <div class="metric"><span>Probability</span><span id="speakerProbability" class="value">--</span></div>
-        <div class="metric"><span>Score</span><span id="speakerScore" class="value">--</span></div>
-        <div class="metric"><span>Margin</span><span id="speakerMargin" class="value">--</span></div>
-        <div class="metric"><span>Reason</span><span id="speakerReason" class="value">--</span></div>
+        <div class="latency-metrics">
+          <div class="metric"><span>E2E</span><span id="latency" class="value">--</span></div>
+          <div class="metric"><span>Audio received</span><span id="audioSeconds" class="value">--</span></div>
+          <div class="metric"><span>Speaker</span><span id="speaker" class="value">unknown</span></div>
+          <div class="metric"><span>Probability</span><span id="speakerProbability" class="value">--</span></div>
+          <div class="metric"><span>Score</span><span id="speakerScore" class="value">--</span></div>
+          <div class="metric"><span>Margin</span><span id="speakerMargin" class="value">--</span></div>
+          <div class="metric"><span>Reason</span><span id="speakerReason" class="value">--</span></div>
+        </div>
         <div id="speakerCandidates" class="candidate-list"><div class="empty">Speaker probabilities will appear while streaming.</div></div>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel profile-panel">
       <div class="panel-header">
-        <h2>Speaker Turns</h2>
+        <h2>Profiles</h2>
       </div>
       <div class="panel-body">
-        <div id="speakerTurns" class="turn-list"><div class="empty">Speaker turns will appear while streaming.</div></div>
+        <div id="speakers" class="speakers"></div>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel enroll-panel">
       <div class="panel-header">
         <h2>Enroll Speaker</h2>
       </div>
@@ -592,14 +585,6 @@
         <div id="enrollStatus" class="status">Use 20-30 seconds of clean speech.</div>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-header">
-        <h2>Profiles</h2>
-      </div>
-      <div class="panel-body">
-        <div id="speakers" class="speakers"></div>
-      </div>
-    </div>
   </aside>
 </main>
 <script>
@@ -619,7 +604,6 @@ const els = {
   speakerMargin: document.getElementById('speakerMargin'),
   speakerReason: document.getElementById('speakerReason'),
   speakerCandidates: document.getElementById('speakerCandidates'),
-  speakerTurns: document.getElementById('speakerTurns'),
   latencyNeedle: document.getElementById('latencyNeedle'),
   latencyGaugeValue: document.getElementById('latencyGaugeValue'),
   speakers: document.getElementById('speakers'),
@@ -716,24 +700,6 @@ function handleTranscriptEvent(event) {
   renderTranscript();
   updateMetrics(event);
 }
-function renderSpeakerTurns(turns) {
-  const rows = Array.isArray(turns) ? turns.slice(-12) : [];
-  if (!rows.length) {
-    els.speakerTurns.innerHTML = '<div class="empty">Speaker turns will appear while streaming.</div>';
-    return;
-  }
-  els.speakerTurns.innerHTML = rows.map(turn => {
-    const classes = ['turn-row'];
-    if (turn.known) classes.push('known');
-    if (turn.overlap_possible) classes.push('overlap');
-    const start = Number(turn.start);
-    const end = Number(turn.end);
-    const time = Number.isFinite(start) && Number.isFinite(end) ? `${start.toFixed(1)}-${end.toFixed(1)}s` : '--';
-    const prob = Number.isFinite(Number(turn.probability)) ? ` · ${fmtProb(turn.probability)}` : '';
-    return `<div class="${classes.join(' ')}"><span class="turn-dot"></span><span class="turn-name">${escapeHtml(turn.speaker || 'Unknown')}${prob}</span><span class="turn-time">${time}</span></div>`;
-  }).join('');
-  els.speakerTurns.scrollTop = els.speakerTurns.scrollHeight;
-}
 function updateMetrics(event) {
   if ('end_to_end_latency_seconds' in event) {
     els.latency.textContent = fmtMs(event.end_to_end_latency_seconds);
@@ -750,7 +716,6 @@ function updateMetrics(event) {
   }
   if ('speaker_reason' in event) els.speakerReason.textContent = event.speaker_reason || '--';
   if ('speaker_candidates' in event) renderSpeakerCandidates(event.speaker_candidates);
-  if ('speaker_turns' in event) renderSpeakerTurns(event.speaker_turns);
 }
 function workletSource() {
   return `
