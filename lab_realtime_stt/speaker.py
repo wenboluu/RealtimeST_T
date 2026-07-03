@@ -59,7 +59,14 @@ def normalize_embedding(vector: np.ndarray) -> np.ndarray:
     return vector / norm
 
 
-def load_audio_bytes(data: bytes, suffix: str = ".webm", sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+def load_audio_bytes(
+    data: bytes,
+    suffix: str = ".webm",
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    timeout_seconds: float = 30.0,
+    max_duration_seconds: float | None = None,
+) -> np.ndarray:
     """Decode arbitrary audio bytes through ffmpeg into mono float32 at 16 kHz."""
     if not data:
         raise ValueError("empty audio upload")
@@ -85,15 +92,22 @@ def load_audio_bytes(data: bytes, suffix: str = ".webm", sample_rate: int = SAMP
             str(sample_rate),
             "-",
         ]
-        raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+        raw = subprocess.run(cmd, capture_output=True, check=True, timeout=timeout_seconds).stdout
     if not raw:
         raise ValueError("ffmpeg decoded no audio")
-    return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if len(raw) % 2:
+        raise ValueError("ffmpeg returned partial pcm16 sample")
+    audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if max_duration_seconds is not None and audio.size > int(max_duration_seconds * sample_rate):
+        raise ValueError(f"decoded audio is longer than {max_duration_seconds:.1f}s")
+    return audio
 
 
 def pcm16_bytes_to_float32(data: bytes) -> np.ndarray:
     if not data:
         return np.zeros(0, dtype=np.float32)
+    if len(data) % 2:
+        raise ValueError("pcm16 audio frame has an odd byte length")
     return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
 
 
@@ -398,7 +412,7 @@ class SpeakerCalibrator:
     def _load_cohort(path: Path | None) -> np.ndarray:
         if path is None or not path.exists():
             return np.zeros((0, 0), dtype=np.float32)
-        data = np.load(path, allow_pickle=True)
+        data = np.load(path, allow_pickle=False)
         matrix = np.asarray(data["embeddings"], dtype=np.float32)
         if matrix.ndim != 2 or matrix.size == 0:
             return np.zeros((0, 0), dtype=np.float32)

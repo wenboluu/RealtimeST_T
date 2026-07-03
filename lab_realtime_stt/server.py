@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
+import os
+import shutil
 import subprocess
 import threading
 import time
@@ -13,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +33,32 @@ from .speaker import (
 
 LOGGER = logging.getLogger("lab_realtime_stt")
 
+DEFAULT_CALIBRATOR_PATH = "artifacts/calibration/speaker_calibrator.joblib"
+DEFAULT_COHORT_PATH = "artifacts/cohorts/cohort_bank.npz"
+
+
+def _env_str(name: str, default: str) -> str:
+    return os.getenv(name, default)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return int(value) if value not in (None, "") else default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return float(value) if value not in (None, "") else default
+
+
+def _env_optional_float(name: str) -> float | None:
+    value = os.getenv(name)
+    return float(value) if value not in (None, "") else None
+
+
+def _optional_path(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
 
 @dataclass
 class ServerConfig:
@@ -45,8 +74,8 @@ class ServerConfig:
     speaker_margin: float = 0.1
     speaker_window_seconds: float = 3.0
     speaker_min_voiced_seconds: float = 0.8
-    speaker_calibrator_path: Path | None = Path("/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
-    speaker_cohort_path: Path | None = Path("/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank_librispeech_starter.npz")
+    speaker_calibrator_path: Path | None = Path(DEFAULT_CALIBRATOR_PATH)
+    speaker_cohort_path: Path | None = Path(DEFAULT_COHORT_PATH)
     speaker_probability_threshold: float | None = None
     enable_speaker_turns: bool = True
     speaker_turn_switch_after: int = 2
@@ -55,6 +84,13 @@ class ServerConfig:
     speaker_overlap_margin: float = 0.25
     stable_after: int = 2
     profiles_dir: Path = Path("data/speaker_profiles")
+    api_key: str | None = None
+    max_upload_mb: float = 100.0
+    max_upload_seconds: float = 180.0
+    upload_decode_timeout: float = 45.0
+    ws_max_frame_bytes: int = 256_000
+    ws_max_session_seconds: float = 7200.0
+    max_sessions: int = 4
     debug: bool = False
 
 
@@ -77,6 +113,7 @@ class RealtimeSession:
         self.closed = threading.Event()
         self.match_lock = threading.Lock()
         self.match_running = False
+        self.match_threads: list[threading.Thread] = []
         self.last_match_at = 0.0
         self.last_match: dict[str, Any] | None = None
         self.speaker_history: deque[str] = deque(maxlen=3)
@@ -122,9 +159,12 @@ class RealtimeSession:
         )
 
     def _enqueue(self, event: dict[str, Any]) -> None:
+        if self.closed.is_set() or self.loop.is_closed():
+            return
         event.setdefault("session_id", self.session_id)
         event.setdefault("server_time", time.time())
-        self.loop.call_soon_threadsafe(self.events.put_nowait, event)
+        with contextlib.suppress(RuntimeError):
+            self.loop.call_soon_threadsafe(self.events.put_nowait, event)
 
     def _latency(self) -> dict[str, Any]:
         audio_clock = self.started_at + self.audio.duration_seconds
@@ -175,6 +215,8 @@ class RealtimeSession:
     def feed_audio(self, data: bytes) -> None:
         if self.closed.is_set():
             return
+        if self.audio.duration_seconds >= self.config.ws_max_session_seconds:
+            raise ValueError("maximum websocket audio session duration exceeded")
         self.audio.append_pcm16(data)
         self.recorder.feed_audio(data, original_sample_rate=SAMPLE_RATE)
         self._maybe_schedule_match()
@@ -191,7 +233,10 @@ class RealtimeSession:
                 return
             self.match_running = True
             self.last_match_at = now
-        threading.Thread(target=self._run_match, args=(recent,), name=f"speaker-match-{self.session_id[:8]}", daemon=True).start()
+        thread = threading.Thread(target=self._run_match, args=(recent,), name=f"speaker-match-{self.session_id[:8]}", daemon=True)
+        thread.start()
+        self.match_threads.append(thread)
+        self.match_threads = [item for item in self.match_threads if item.is_alive()]
 
     def _run_match(self, audio) -> None:
         started = time.perf_counter()
@@ -269,13 +314,91 @@ class RealtimeSession:
             self.recorder.shutdown()
         except Exception:
             pass
+        if self.worker and self.worker.is_alive() and threading.current_thread() is not self.worker:
+            self.worker.join(timeout=1.0)
+        for thread in list(self.match_threads):
+            if thread.is_alive() and threading.current_thread() is not thread:
+                thread.join(timeout=0.2)
+
+
+def _path_for_cwd(path: Path) -> Path:
+    return path if path.is_absolute() else Path.cwd() / path
+
+
+def _check_profile_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".write-test-{uuid.uuid4().hex}"
+        probe.write_text("ok")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def runtime_checks(config: ServerConfig, profiles_dir: Path, matcher: SpeakerMatcher) -> dict[str, Any]:
+    checks: dict[str, Any] = {
+        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "profiles_writable": _check_profile_dir(profiles_dir),
+        "speaker_calibrator_loaded": bool(matcher.calibrator),
+    }
+    try:
+        import RealtimeSTT  # noqa: F401
+        checks["realtime_stt_importable"] = True
+    except Exception as exc:
+        checks["realtime_stt_importable"] = False
+        checks["realtime_stt_error"] = exc.__class__.__name__
+    try:
+        import torch
+        cuda_available = bool(torch.cuda.is_available())
+    except Exception as exc:
+        cuda_available = False
+        checks["torch_error"] = exc.__class__.__name__
+    checks["cuda_available"] = cuda_available
+    checks["device_available"] = config.device == "cpu" or not config.device.startswith("cuda") or cuda_available
+    checks["auth_configured"] = bool(config.api_key)
+    checks["network_exposed_without_auth"] = config.host not in {"127.0.0.1", "localhost"} and not config.api_key
+    checks["ok"] = bool(checks["ffmpeg"] and checks["profiles_writable"] and checks["realtime_stt_importable"] and checks["device_available"])
+    return checks
+
+
+def _extract_bearer(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    prefix = "Bearer "
+    return authorization[len(prefix) :].strip() if authorization.startswith(prefix) else None
+
+
+def _token_valid(config: ServerConfig, token: str | None) -> bool:
+    return not config.api_key or bool(token) and token == config.api_key
+
+
+async def read_limited_upload(upload: UploadFile, max_bytes: int) -> bytes:
+    content_length = upload.headers.get("content-length") if upload.headers else None
+    if content_length:
+        with contextlib.suppress(ValueError):
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"upload exceeds {max_bytes} bytes")
+    data = await upload.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"upload exceeds {max_bytes} bytes")
+    return data
+
+
+def decode_upload(data: bytes, suffix: str, config: ServerConfig):
+    return load_audio_bytes(
+        data,
+        suffix=suffix,
+        timeout_seconds=config.upload_decode_timeout,
+        max_duration_seconds=config.max_upload_seconds,
+    )
 
 
 def create_app(config: ServerConfig) -> FastAPI:
     app = FastAPI(title="Lab Realtime STT", version="0.1.0")
     root = Path(__file__).resolve().parent
     static_dir = root / "static"
-    profiles_dir = config.profiles_dir if config.profiles_dir.is_absolute() else Path.cwd() / config.profiles_dir
+    profiles_dir = _path_for_cwd(config.profiles_dir)
     embedder = PyannoteEmbeddingBackend(model_name=config.speaker_model, device=config.device)
     store = SpeakerProfileStore(profiles_dir, embedder=embedder)
     calibrator = None
@@ -309,6 +432,17 @@ def create_app(config: ServerConfig) -> FastAPI:
     app.state.store = store
     app.state.matcher = matcher
     app.state.calibrator = calibrator
+    app.state.active_sessions = 0
+    app.state.session_lock = asyncio.Lock()
+
+    async def require_auth(
+        request: Request,
+        x_api_key: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ) -> None:
+        token = x_api_key or _extract_bearer(authorization)
+        if not _token_valid(config, token):
+            raise HTTPException(status_code=401, detail="valid API key required")
 
     @app.get("/")
     async def index():
@@ -316,20 +450,12 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.get("/api/health")
     async def health():
-        try:
-            import torch
-            cuda_available = bool(torch.cuda.is_available())
-        except Exception:
-            cuda_available = False
-        try:
-            import RealtimeSTT  # noqa: F401
-            realtime_stt = True
-        except Exception:
-            realtime_stt = False
-        return {
-            "ok": True,
-            "realtime_stt_importable": realtime_stt,
-            "cuda_available": cuda_available,
+        checks = runtime_checks(config, store.directory, matcher)
+        body = {
+            "ok": checks["ok"],
+            "checks": checks,
+            "realtime_stt_importable": checks.get("realtime_stt_importable", False),
+            "cuda_available": checks.get("cuda_available", False),
             "device": config.device,
             "model": config.model,
             "realtime_model": config.realtime_model,
@@ -346,25 +472,28 @@ def create_app(config: ServerConfig) -> FastAPI:
             "speaker_turn_switch_after": config.speaker_turn_switch_after,
             "speaker_turn_min_seconds": config.speaker_turn_min_seconds,
         }
+        return JSONResponse(body, status_code=200 if checks["ok"] else 503)
 
     @app.get("/api/speakers")
-    async def list_speakers():
+    async def list_speakers(_auth: None = Depends(require_auth)):
         return {"speakers": [asdict(profile) | {"embedding": None} for profile in store.list_profiles()]}
 
     @app.delete("/api/speakers/{speaker_id}")
-    async def delete_speaker(speaker_id: str):
+    async def delete_speaker(speaker_id: str, _auth: None = Depends(require_auth)):
         deleted = store.delete_profile(speaker_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="speaker profile not found")
         return {"deleted": True, "speaker_id": speaker_id}
 
     @app.post("/api/speakers/enroll")
-    async def enroll_speaker(name: str = Form(...), audio: UploadFile = File(...)):
+    async def enroll_speaker(name: str = Form(...), audio: UploadFile = File(...), _auth: None = Depends(require_auth)):
         suffix = Path(audio.filename or "upload.webm").suffix or ".webm"
-        data = await audio.read()
+        data = await read_limited_upload(audio, int(config.max_upload_mb * 1024 * 1024))
         try:
-            decoded = load_audio_bytes(data, suffix=suffix)
+            decoded = decode_upload(data, suffix, config)
             profile = store.enroll(name, decoded)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="ffmpeg decode timed out")
         except subprocess.CalledProcessError as exc:  # type: ignore[name-defined]
             raise HTTPException(status_code=400, detail=f"ffmpeg failed: {exc.stderr.decode(errors='ignore')}")
         except Exception as exc:
@@ -374,12 +503,14 @@ def create_app(config: ServerConfig) -> FastAPI:
         return {"profile": public}
 
     @app.post("/api/speakers/score")
-    async def score_speaker(audio: UploadFile = File(...)):
+    async def score_speaker(audio: UploadFile = File(...), _auth: None = Depends(require_auth)):
         suffix = Path(audio.filename or "upload.webm").suffix or ".webm"
-        data = await audio.read()
+        data = await read_limited_upload(audio, int(config.max_upload_mb * 1024 * 1024))
         try:
-            decoded = load_audio_bytes(data, suffix=suffix)
+            decoded = decode_upload(data, suffix, config)
             match = matcher.match_audio(decoded)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="ffmpeg decode timed out")
         except subprocess.CalledProcessError as exc:  # type: ignore[name-defined]
             raise HTTPException(status_code=400, detail=f"ffmpeg failed: {exc.stderr.decode(errors='ignore')}")
         except Exception as exc:
@@ -388,10 +519,15 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.websocket("/ws/transcribe")
     async def websocket_transcribe(websocket: WebSocket):
+        token = websocket.query_params.get("token") or websocket.headers.get("x-api-key") or _extract_bearer(websocket.headers.get("authorization"))
+        if not _token_valid(config, token):
+            await websocket.close(code=1008, reason="valid API key required")
+            return
         await websocket.accept()
         loop = asyncio.get_running_loop()
         events: asyncio.Queue = asyncio.Queue()
         session: RealtimeSession | None = None
+        session_counted = False
 
         async def sender():
             while True:
@@ -406,14 +542,35 @@ def create_app(config: ServerConfig) -> FastAPI:
                     break
                 text_message = message.get("text")
                 if text_message is not None:
-                    data = json.loads(text_message)
-                    if data.get("type") == "session.start":
+                    try:
+                        data = json.loads(text_message)
+                    except json.JSONDecodeError:
+                        await events.put({"type": "error", "code": "bad_request", "error": "invalid JSON control message"})
+                        await websocket.close(code=1003)
+                        break
+                    message_type = data.get("type")
+                    if message_type == "session.start":
                         if session is not None:
                             session.close()
+                            session = None
+                            if session_counted:
+                                async with app.state.session_lock:
+                                    app.state.active_sessions = max(0, app.state.active_sessions - 1)
+                                session_counted = False
+                        async with app.state.session_lock:
+                            if app.state.active_sessions >= config.max_sessions:
+                                await events.put({"type": "error", "code": "busy", "error": "maximum active sessions reached"})
+                                continue
+                            app.state.active_sessions += 1
+                            session_counted = True
                         try:
-                            session = RealtimeSession(config, matcher, loop, events, data)
+                            session = await loop.run_in_executor(None, lambda: RealtimeSession(config, matcher, loop, events, data))
                         except Exception as exc:
-                            await events.put({"type": "error", "error": str(exc)})
+                            async with app.state.session_lock:
+                                if session_counted:
+                                    app.state.active_sessions = max(0, app.state.active_sessions - 1)
+                                    session_counted = False
+                            await events.put({"type": "error", "code": "session_start_failed", "error": str(exc)})
                             continue
                         await events.put({
                             "type": "session.ready",
@@ -425,44 +582,72 @@ def create_app(config: ServerConfig) -> FastAPI:
                             "speaker_probability_threshold": matcher.calibrator.threshold if matcher.calibrator else None,
                             "speaker_turns_enabled": config.enable_speaker_turns,
                         })
-                    elif data.get("type") == "session.stop":
+                    elif message_type == "session.stop":
                         break
+                    else:
+                        await events.put({"type": "error", "code": "bad_request", "error": f"unknown control message: {message_type}"})
                 data_bytes = message.get("bytes")
-                if data_bytes is not None and session is not None:
-                    session.feed_audio(data_bytes)
+                if data_bytes is not None:
+                    if session is None:
+                        await events.put({"type": "error", "code": "bad_request", "error": "audio received before session.start"})
+                        continue
+                    if len(data_bytes) > config.ws_max_frame_bytes:
+                        await events.put({"type": "error", "code": "frame_too_large", "error": "audio frame too large"})
+                        await websocket.close(code=1009)
+                        break
+                    try:
+                        session.feed_audio(data_bytes)
+                    except ValueError as exc:
+                        await events.put({"type": "error", "code": "bad_audio", "error": str(exc)})
+                    except Exception as exc:
+                        await events.put({"type": "error", "code": "audio_feed_failed", "error": exc.__class__.__name__})
+                        await websocket.close(code=1011)
+                        break
         except WebSocketDisconnect:
             pass
         finally:
             if session is not None:
                 session.close()
+            if session_counted:
+                async with app.state.session_lock:
+                    app.state.active_sessions = max(0, app.state.active_sessions - 1)
             send_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, RuntimeError, WebSocketDisconnect):
+                await send_task
 
     return app
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RealtimeSTT lab assistant server with enrolled speaker matching.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7860)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--model", default="small.en")
-    parser.add_argument("--realtime-model", default="tiny.en")
-    parser.add_argument("--language", default="en")
-    parser.add_argument("--compute-type", default="float16")
-    parser.add_argument("--speaker-model", default="pyannote/embedding")
-    parser.add_argument("--speaker-threshold", type=float, default=0.3)
-    parser.add_argument("--speaker-margin", type=float, default=0.1)
-    parser.add_argument("--speaker-window-seconds", type=float, default=3.0)
-    parser.add_argument("--speaker-min-voiced-seconds", type=float, default=0.8)
-    parser.add_argument("--speaker-calibrator", default="/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
-    parser.add_argument("--speaker-cohort-bank", default="/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank_librispeech_starter.npz")
-    parser.add_argument("--speaker-probability-threshold", type=float)
+    parser.add_argument("--host", default=_env_str("LAB_STT_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=_env_int("LAB_STT_PORT", 7860))
+    parser.add_argument("--device", default=_env_str("LAB_STT_DEVICE", "cuda"))
+    parser.add_argument("--model", default=_env_str("LAB_STT_MODEL", "small.en"))
+    parser.add_argument("--realtime-model", default=_env_str("LAB_STT_REALTIME_MODEL", "tiny.en"))
+    parser.add_argument("--language", default=_env_str("LAB_STT_LANGUAGE", "en"))
+    parser.add_argument("--compute-type", default=_env_str("LAB_STT_COMPUTE_TYPE", "float16"))
+    parser.add_argument("--speaker-model", default=_env_str("LAB_STT_SPEAKER_MODEL", "pyannote/embedding"))
+    parser.add_argument("--speaker-threshold", type=float, default=_env_float("LAB_STT_SPEAKER_THRESHOLD", 0.3))
+    parser.add_argument("--speaker-margin", type=float, default=_env_float("LAB_STT_SPEAKER_MARGIN", 0.1))
+    parser.add_argument("--speaker-window-seconds", type=float, default=_env_float("LAB_STT_SPEAKER_WINDOW_SECONDS", 3.0))
+    parser.add_argument("--speaker-min-voiced-seconds", type=float, default=_env_float("LAB_STT_SPEAKER_MIN_VOICED_SECONDS", 0.8))
+    parser.add_argument("--speaker-calibrator", default=_env_str("LAB_STT_SPEAKER_CALIBRATOR", DEFAULT_CALIBRATOR_PATH))
+    parser.add_argument("--speaker-cohort-bank", default=_env_str("LAB_STT_SPEAKER_COHORT_BANK", DEFAULT_COHORT_PATH))
+    parser.add_argument("--speaker-probability-threshold", type=float, default=_env_optional_float("LAB_STT_SPEAKER_PROBABILITY_THRESHOLD"))
     parser.add_argument("--no-speaker-turns", action="store_true", help="Disable Stage 1 speaker-turn timeline tracking.")
     parser.add_argument("--speaker-turn-switch-after", type=int, default=2)
     parser.add_argument("--speaker-turn-min-seconds", type=float, default=0.8)
     parser.add_argument("--speaker-overlap-probability", type=float, default=0.35)
     parser.add_argument("--speaker-overlap-margin", type=float, default=0.25)
-    parser.add_argument("--profiles-dir", default="data/speaker_profiles")
+    parser.add_argument("--profiles-dir", default=_env_str("LAB_STT_PROFILES_DIR", "data/speaker_profiles"))
+    parser.add_argument("--api-key", default=os.getenv("LAB_STT_API_KEY") or None, help="Optional API key required for speaker mutation APIs and websocket sessions.")
+    parser.add_argument("--max-upload-mb", type=float, default=_env_float("LAB_STT_MAX_UPLOAD_MB", 100.0))
+    parser.add_argument("--max-upload-seconds", type=float, default=_env_float("LAB_STT_MAX_UPLOAD_SECONDS", 180.0))
+    parser.add_argument("--upload-decode-timeout", type=float, default=_env_float("LAB_STT_UPLOAD_DECODE_TIMEOUT", 45.0))
+    parser.add_argument("--ws-max-frame-bytes", type=int, default=_env_int("LAB_STT_WS_MAX_FRAME_BYTES", 256000))
+    parser.add_argument("--ws-max-session-seconds", type=float, default=_env_float("LAB_STT_WS_MAX_SESSION_SECONDS", 7200.0))
+    parser.add_argument("--max-sessions", type=int, default=_env_int("LAB_STT_MAX_SESSIONS", 4))
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
@@ -485,8 +670,8 @@ def main() -> None:
         speaker_margin=args.speaker_margin,
         speaker_window_seconds=args.speaker_window_seconds,
         speaker_min_voiced_seconds=args.speaker_min_voiced_seconds,
-        speaker_calibrator_path=Path(args.speaker_calibrator) if args.speaker_calibrator else None,
-        speaker_cohort_path=Path(args.speaker_cohort_bank) if args.speaker_cohort_bank else None,
+        speaker_calibrator_path=_optional_path(args.speaker_calibrator),
+        speaker_cohort_path=_optional_path(args.speaker_cohort_bank),
         speaker_probability_threshold=args.speaker_probability_threshold,
         enable_speaker_turns=not args.no_speaker_turns,
         speaker_turn_switch_after=args.speaker_turn_switch_after,
@@ -494,6 +679,13 @@ def main() -> None:
         speaker_overlap_probability=args.speaker_overlap_probability,
         speaker_overlap_margin=args.speaker_overlap_margin,
         profiles_dir=Path(args.profiles_dir),
+        api_key=args.api_key,
+        max_upload_mb=args.max_upload_mb,
+        max_upload_seconds=args.max_upload_seconds,
+        upload_decode_timeout=args.upload_decode_timeout,
+        ws_max_frame_bytes=args.ws_max_frame_bytes,
+        ws_max_session_seconds=args.ws_max_session_seconds,
+        max_sessions=args.max_sessions,
         debug=args.debug,
     )
     app = create_app(config)

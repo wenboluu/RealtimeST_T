@@ -647,6 +647,27 @@ function wsUrl(path) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}${path}`;
 }
+function apiKey() { return localStorage.getItem('labSttApiKey') || ''; }
+function authHeaders(base={}) {
+  const headers = new Headers(base);
+  const token = apiKey();
+  if (token) headers.set('X-API-Key', token);
+  return headers;
+}
+async function apiFetch(path, options={}) {
+  const res = await fetch(path, {...options, headers: authHeaders(options.headers)});
+  if (res.status !== 401) return res;
+  const token = window.prompt('Access token required');
+  if (!token) return res;
+  localStorage.setItem('labSttApiKey', token.trim());
+  return fetch(path, {...options, headers: authHeaders(options.headers)});
+}
+function authedWsUrl(path) {
+  const url = new URL(wsUrl(path));
+  const token = apiKey();
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
+}
 function fmtSec(v) { const n = Number(v); return Number.isFinite(n) ? `${n.toFixed(3)}s` : '--'; }
 function fmtMs(v) { const n = Number(v); return Number.isFinite(n) ? `${Math.round(n * 1000)}ms` : '--'; }
 function fmtProb(v) { const n = Number(v); return Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '--'; }
@@ -761,34 +782,46 @@ registerProcessor('pcm-worklet', PCMWorklet);
 }
 async function start() {
   if (socket) return;
-  transcriptLines = [];
-  liveTranscript = null;
-  renderTranscript();
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioContext = new AudioContext({ sampleRate: 16000 });
-  const source = audioContext.createMediaStreamSource(mediaStream);
-  const url = URL.createObjectURL(new Blob([workletSource()], { type: 'text/javascript' }));
-  await audioContext.audioWorklet.addModule(url);
-  URL.revokeObjectURL(url);
-  workletNode = new AudioWorkletNode(audioContext, 'pcm-worklet', { numberOfOutputs: 0 });
-  socket = new WebSocket(wsUrl('/ws/transcribe'));
-  socket.binaryType = 'arraybuffer';
-  socket.onopen = () => {
-    socket.send(JSON.stringify({ type: 'session.start', language: els.language.value.trim() || 'en' }));
-    source.connect(workletNode);
-    workletNode.port.onmessage = e => { if (socket && socket.readyState === WebSocket.OPEN) socket.send(e.data); };
-  };
-  socket.onmessage = e => {
-    const event = JSON.parse(e.data);
-    if (event.type === 'session.ready') els.streamStatus.textContent = `Ready. Profiles: ${event.profiles}. Calibrator: ${event.speaker_calibrator ? 'on' : 'off'}. Turns: ${event.speaker_turns_enabled ? 'on' : 'off'}`;
-    if (event.type === 'transcript') handleTranscriptEvent(event);
-    if (event.type === 'speaker.match') updateMetrics(event);
-    if (event.type === 'error') els.streamStatus.textContent = event.error || 'Server error';
-  };
-  socket.onclose = () => stop(false);
-  els.startBtn.disabled = true;
-  els.stopBtn.disabled = false;
-  els.streamStatus.textContent = 'Connecting...';
+  try {
+    transcriptLines = [];
+    liveTranscript = null;
+    renderTranscript();
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    const url = URL.createObjectURL(new Blob([workletSource()], { type: 'text/javascript' }));
+    await audioContext.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    workletNode = new AudioWorkletNode(audioContext, 'pcm-worklet', { numberOfOutputs: 0 });
+    socket = new WebSocket(authedWsUrl('/ws/transcribe'));
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: 'session.start', language: els.language.value.trim() || 'en' }));
+      source.connect(workletNode);
+      workletNode.port.onmessage = e => { if (socket && socket.readyState === WebSocket.OPEN) socket.send(e.data); };
+    };
+    socket.onmessage = e => {
+      let event;
+      try { event = JSON.parse(e.data); } catch { return; }
+      if (event.type === 'session.ready') els.streamStatus.textContent = `Ready. Profiles: ${event.profiles}. Calibrator: ${event.speaker_calibrator ? 'on' : 'off'}. Turns: ${event.speaker_turns_enabled ? 'on' : 'off'}`;
+      if (event.type === 'transcript') handleTranscriptEvent(event);
+      if (event.type === 'speaker.match') updateMetrics(event);
+      if (event.type === 'error') {
+        els.streamStatus.textContent = event.error || 'Server error';
+        if (event.code === 'session_start_failed' || event.code === 'busy') stop(false);
+      }
+    };
+    socket.onclose = e => {
+      if (e.code === 1008) els.streamStatus.textContent = 'Access token required. Reload and enter token when prompted.';
+      stop(false);
+    };
+    els.startBtn.disabled = true;
+    els.stopBtn.disabled = false;
+    els.streamStatus.textContent = 'Connecting...';
+  } catch (err) {
+    els.streamStatus.textContent = err && err.message ? err.message : 'Could not start microphone session.';
+    stop(false);
+  }
 }
 function stop(sendStop=true) {
   if (sendStop && socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.stop' }));
@@ -800,12 +833,17 @@ function stop(sendStop=true) {
   els.startBtn.disabled = false; els.stopBtn.disabled = true; els.streamStatus.textContent = 'Idle.';
 }
 async function refreshSpeakers() {
-  const res = await fetch('/api/speakers');
-  const data = await res.json();
-  const speakers = data.speakers || [];
-  if (!speakers.length) { els.speakers.innerHTML = '<div class="empty">No profiles yet.</div>'; return; }
-  els.speakers.innerHTML = speakers.map(s => `<div class="speaker-row"><div><strong>${escapeHtml(s.name)}</strong><div class="status">${s.num_chunks} chunks, ${s.voiced_seconds}s</div></div><button class="danger" data-delete="${escapeHtml(s.speaker_id)}">Delete</button></div>`).join('');
-  els.speakers.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = async () => { await fetch(`/api/speakers/${btn.dataset.delete}`, { method:'DELETE' }); refreshSpeakers(); });
+  try {
+    const res = await apiFetch('/api/speakers');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { els.speakers.innerHTML = `<div class="empty">${escapeHtml(data.detail || 'Could not load profiles.')}</div>`; return; }
+    const speakers = data.speakers || [];
+    if (!speakers.length) { els.speakers.innerHTML = '<div class="empty">No profiles yet.</div>'; return; }
+    els.speakers.innerHTML = speakers.map(s => `<div class="speaker-row"><div><strong>${escapeHtml(s.name)}</strong><div class="status">${s.num_chunks} chunks, ${s.voiced_seconds}s</div></div><button class="danger" data-delete="${escapeHtml(s.speaker_id)}">Delete</button></div>`).join('');
+    els.speakers.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = async () => { await apiFetch(`/api/speakers/${btn.dataset.delete}`, { method:'DELETE' }); refreshSpeakers(); });
+  } catch (err) {
+    els.speakers.innerHTML = '<div class="empty">Could not load profiles.</div>';
+  }
 }
 async function enroll(blob) {
   const name = els.speakerName.value.trim();
@@ -816,24 +854,32 @@ async function enroll(blob) {
   form.append('name', name);
   form.append('audio', audio, audio.name || 'enrollment.webm');
   els.enrollStatus.textContent = 'Enrolling...';
-  const res = await fetch('/api/speakers/enroll', { method:'POST', body: form });
-  const data = await res.json();
-  if (!res.ok) { els.enrollStatus.textContent = data.detail || 'Enrollment failed.'; return; }
-  els.enrollStatus.textContent = `Enrolled ${data.profile.name}.`;
-  enrollBlob = null;
-  els.speakerFile.value = '';
-  refreshSpeakers();
+  try {
+    const res = await apiFetch('/api/speakers/enroll', { method:'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { els.enrollStatus.textContent = data.detail || 'Enrollment failed.'; return; }
+    els.enrollStatus.textContent = `Enrolled ${data.profile.name}.`;
+    enrollBlob = null;
+    els.speakerFile.value = '';
+    refreshSpeakers();
+  } catch (err) {
+    els.enrollStatus.textContent = 'Enrollment request failed.';
+  }
 }
 async function startEnrollRecording() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  enrollChunks = [];
-  enrollRecorder = new MediaRecorder(stream);
-  enrollRecorder.ondataavailable = e => { if (e.data.size) enrollChunks.push(e.data); };
-  enrollRecorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); enrollBlob = new Blob(enrollChunks, { type: enrollRecorder.mimeType || 'audio/webm' }); els.enrollStatus.textContent = `Recorded ${(enrollBlob.size / 1024).toFixed(1)} KB. Click Enroll.`; };
-  enrollRecorder.start(500);
-  els.recordEnrollBtn.disabled = true;
-  els.stopEnrollBtn.disabled = false;
-  els.enrollStatus.textContent = 'Recording enrollment...';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    enrollChunks = [];
+    enrollRecorder = new MediaRecorder(stream);
+    enrollRecorder.ondataavailable = e => { if (e.data.size) enrollChunks.push(e.data); };
+    enrollRecorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); enrollBlob = new Blob(enrollChunks, { type: enrollRecorder.mimeType || 'audio/webm' }); els.enrollStatus.textContent = `Recorded ${(enrollBlob.size / 1024).toFixed(1)} KB. Click Enroll.`; };
+    enrollRecorder.start(500);
+    els.recordEnrollBtn.disabled = true;
+    els.stopEnrollBtn.disabled = false;
+    els.enrollStatus.textContent = 'Recording enrollment...';
+  } catch (err) {
+    els.enrollStatus.textContent = err && err.message ? err.message : 'Could not start enrollment recording.';
+  }
 }
 function stopEnrollRecording() {
   if (enrollRecorder && enrollRecorder.state !== 'inactive') enrollRecorder.stop();
