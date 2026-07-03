@@ -9,7 +9,22 @@ __pycache__/
 data/*.mp3
 data/*.wav
 data/*.webm
-data/speaker_profiles/*.json
+data/speaker_profiles/*
 !data/speaker_profiles/.gitkeep
 data/datasets/
 data/eval/
+
+# Local environment and runtime output
+.env.*
+!.env.example
+*.log
+logs/*
+!logs/.gitkeep
+
+# Local calibration/model artifacts
+artifacts/**
+!artifacts/
+!artifacts/calibration/
+!artifacts/calibration/.gitkeep
+!artifacts/cohorts/
+!artifacts/cohorts/.gitkeep
