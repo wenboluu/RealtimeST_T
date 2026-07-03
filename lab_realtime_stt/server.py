@@ -17,6 +17,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, W
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .diarization import SpeakerTurnTracker
 from .speaker import (
     PyannoteEmbeddingBackend,
     RollingAudioBuffer,
@@ -47,6 +48,11 @@ class ServerConfig:
     speaker_calibrator_path: Path | None = Path("/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
     speaker_cohort_path: Path | None = Path("/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank_librispeech_starter.npz")
     speaker_probability_threshold: float | None = None
+    enable_speaker_turns: bool = True
+    speaker_turn_switch_after: int = 2
+    speaker_turn_min_seconds: float = 0.8
+    speaker_overlap_probability: float = 0.35
+    speaker_overlap_margin: float = 0.25
     stable_after: int = 2
     profiles_dir: Path = Path("data/speaker_profiles")
     debug: bool = False
@@ -75,6 +81,12 @@ class RealtimeSession:
         self.last_match: dict[str, Any] | None = None
         self.speaker_history: deque[str] = deque(maxlen=3)
         self.speaker_miss_count = 0
+        self.turn_tracker = SpeakerTurnTracker(
+            switch_after=self.config.speaker_turn_switch_after,
+            min_turn_seconds=self.config.speaker_turn_min_seconds,
+            overlap_probability=self.config.speaker_overlap_probability,
+            overlap_margin=self.config.speaker_overlap_margin,
+        ) if self.config.enable_speaker_turns else None
         self.worker: threading.Thread | None = None
         self.recorder = self._build_recorder(session_options or {})
         self.worker = threading.Thread(target=self._final_loop, name=f"stt-final-{self.session_id[:8]}", daemon=True)
@@ -123,6 +135,7 @@ class RealtimeSession:
         }
 
     def _speaker_payload(self) -> dict[str, Any]:
+        turn_payload = self.turn_tracker.current_payload() if self.turn_tracker else {}
         if not self.last_match:
             return {
                 "speaker": None,
@@ -130,8 +143,9 @@ class RealtimeSession:
                 "speaker_score": None,
                 "speaker_margin": None,
                 "is_authorized_speaker": False,
+                **turn_payload,
             }
-        return dict(self.last_match)
+        return {**dict(self.last_match), **turn_payload}
 
     def _emit_transcript(self, kind: str, text: str) -> None:
         text = (text or "").strip()
@@ -236,6 +250,9 @@ class RealtimeSession:
                         **candidate_payload,
                         "is_authorized_speaker": False,
                     }
+            turn_event = self.turn_tracker.update(self.last_match, self.audio.duration_seconds) if self.turn_tracker else {}
+            if turn_event:
+                self.last_match.update(turn_event)
             self._enqueue({
                 "type": "speaker.match",
                 **self.last_match,
@@ -325,6 +342,9 @@ def create_app(config: ServerConfig) -> FastAPI:
             "speaker_calibrator": bool(matcher.calibrator),
             "speaker_probability_threshold": matcher.calibrator.threshold if matcher.calibrator else None,
             "speaker_cohort_embeddings": int(matcher.calibrator.cohort_matrix.shape[0]) if matcher.calibrator is not None else 0,
+            "speaker_turns_enabled": config.enable_speaker_turns,
+            "speaker_turn_switch_after": config.speaker_turn_switch_after,
+            "speaker_turn_min_seconds": config.speaker_turn_min_seconds,
         }
 
     @app.get("/api/speakers")
@@ -403,6 +423,7 @@ def create_app(config: ServerConfig) -> FastAPI:
                             "profiles": len(store.list_profiles()),
                             "speaker_calibrator": bool(matcher.calibrator),
                             "speaker_probability_threshold": matcher.calibrator.threshold if matcher.calibrator else None,
+                            "speaker_turns_enabled": config.enable_speaker_turns,
                         })
                     elif data.get("type") == "session.stop":
                         break
@@ -436,6 +457,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speaker-calibrator", default="/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
     parser.add_argument("--speaker-cohort-bank", default="/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank_librispeech_starter.npz")
     parser.add_argument("--speaker-probability-threshold", type=float)
+    parser.add_argument("--no-speaker-turns", action="store_true", help="Disable Stage 1 speaker-turn timeline tracking.")
+    parser.add_argument("--speaker-turn-switch-after", type=int, default=2)
+    parser.add_argument("--speaker-turn-min-seconds", type=float, default=0.8)
+    parser.add_argument("--speaker-overlap-probability", type=float, default=0.35)
+    parser.add_argument("--speaker-overlap-margin", type=float, default=0.25)
     parser.add_argument("--profiles-dir", default="data/speaker_profiles")
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
@@ -462,6 +488,11 @@ def main() -> None:
         speaker_calibrator_path=Path(args.speaker_calibrator) if args.speaker_calibrator else None,
         speaker_cohort_path=Path(args.speaker_cohort_bank) if args.speaker_cohort_bank else None,
         speaker_probability_threshold=args.speaker_probability_threshold,
+        enable_speaker_turns=not args.no_speaker_turns,
+        speaker_turn_switch_after=args.speaker_turn_switch_after,
+        speaker_turn_min_seconds=args.speaker_turn_min_seconds,
+        speaker_overlap_probability=args.speaker_overlap_probability,
+        speaker_overlap_margin=args.speaker_overlap_margin,
         profiles_dir=Path(args.profiles_dir),
         debug=args.debug,
     )
