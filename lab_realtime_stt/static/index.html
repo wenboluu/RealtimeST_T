@@ -96,7 +96,7 @@
     h2 { margin:0; font-size:13px; font-weight:750; text-transform:uppercase; color:#3b4657; }
     main {
       display:grid;
-      grid-template-columns:minmax(0, 1fr) minmax(520px, 36vw);
+      grid-template-columns:minmax(0, 1fr) minmax(560px, 38vw);
       gap:16px;
       height:calc(100vh - 60px);
       padding:16px;
@@ -110,7 +110,7 @@
     }
     .sidebar {
       display:grid;
-      grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns:minmax(170px, .72fr) minmax(330px, 1.28fr);
       grid-template-rows:auto minmax(0, 1fr);
       gap:12px;
       min-height:0;
@@ -181,13 +181,21 @@
     .panel-body { padding:14px; overflow:auto; }
     .latency-body {
       display:grid;
-      grid-template-columns:180px minmax(0, 1fr);
+      grid-template-columns:210px max-content;
       align-items:start;
-      gap:12px 16px;
+      gap:10px 18px;
+      justify-content:start;
     }
     .latency-panel { grid-column:1 / -1; }
-    .latency-body .gauge { margin:0 auto; }
-    .latency-metrics { min-width:0; }
+    .latency-body .gauge { margin:0; }
+    .latency-metrics {
+      display:grid;
+      grid-template-columns:repeat(2, max-content);
+      align-content:start;
+      gap:0 18px;
+      min-width:0;
+      width:max-content;
+    }
     .profile-panel,
     .enroll-panel {
       display:grid;
@@ -196,7 +204,7 @@
       overflow:hidden;
     }
     .profile-panel .panel-body,
-    .enroll-panel .panel-body { min-height:0; }
+    .enroll-panel .panel-body { min-height:0; overflow:visible; }
     .transcript {
       display:flex;
       flex-direction:column;
@@ -277,15 +285,15 @@
     .pill.warn { background:#fff1dc; color:var(--warn); }
     .gauge {
       position:relative;
-      width:180px;
-      height:110px;
+      width:210px;
+      height:118px;
       margin:2px auto 10px;
     }
     .gauge-arc {
       position:absolute;
       inset:0 0 auto 0;
       width:100%;
-      height:104px;
+      height:112px;
       overflow:visible;
     }
     .gauge-track,
@@ -299,9 +307,9 @@
     .gauge-needle {
       position:absolute;
       left:50%;
-      bottom:12px;
+      bottom:14px;
       width:3px;
-      height:72px;
+      height:80px;
       border-radius:999px;
       background:#162033;
       transform-origin:50% calc(100% - 6px);
@@ -313,7 +321,7 @@
     .gauge-hub {
       position:absolute;
       left:50%;
-      bottom:9px;
+      bottom:11px;
       width:18px;
       height:18px;
       border-radius:50%;
@@ -327,7 +335,7 @@
       position:absolute;
       left:0;
       right:0;
-      bottom:31px;
+      bottom:35px;
       text-align:center;
       font-size:22px;
       line-height:1;
@@ -349,15 +357,26 @@
     }
     .metric {
       display:grid;
-      grid-template-columns:minmax(0, 1fr) auto;
-      gap:10px;
-      padding:8px 0;
-      border-bottom:1px solid var(--line-soft);
+      grid-template-columns:auto auto;
+      justify-content:start;
+      gap:8px;
+      padding:4px 0;
       color:var(--muted);
-      font-size:13px;
+      font-size:12px;
+      line-height:1.25;
+      white-space:nowrap;
     }
     .metric:first-child { padding-top:0; }
-    .metric:last-child { padding-bottom:0; border-bottom:0; }
+    .metric:last-child { padding-bottom:0; }
+    .latency-metrics .metric-wide {
+      grid-column:1 / -1;
+      grid-template-columns:auto minmax(0, 1fr);
+      white-space:normal;
+    }
+    .latency-metrics .metric-wide .value {
+      text-align:left;
+      overflow-wrap:anywhere;
+    }
     .candidate-list {
       display:grid;
       gap:8px;
@@ -367,10 +386,10 @@
     }
     .latency-body .candidate-list {
       grid-column:1 / -1;
-      max-height:118px;
-      overflow:auto;
+      max-height:none;
+      overflow:visible;
     }
-    .latency-body .candidate-list .empty { min-height:44px; padding:10px; }
+    .latency-body .candidate-list .empty { min-height:34px; padding:8px; }
     .candidate-row {
       display:grid;
       gap:5px;
@@ -426,7 +445,7 @@
       grid-template-columns:minmax(0, 1fr) auto;
       align-items:center;
       gap:10px;
-      padding:10px 0;
+      padding:7px 0;
       border-bottom:1px solid var(--line-soft);
     }
     .speaker-row:first-child { padding-top:0; }
@@ -441,7 +460,7 @@
     .empty {
       display:grid;
       place-items:center;
-      min-height:120px;
+      min-height:72px;
       color:var(--muted);
       padding:24px 12px;
       text-align:center;
@@ -466,11 +485,11 @@
     .script-text {
       display:grid;
       gap:8px;
-      max-height:220px;
+      max-height:150px;
       overflow:auto;
       padding-top:2px;
     }
-    .enroll-controls { display:grid; gap:10px; }
+    .enroll-controls { display:grid; gap:8px; }
     .enroll-actions {
       display:grid;
       grid-template-columns:1fr 1fr;
@@ -547,7 +566,7 @@
           <div class="metric"><span>Probability</span><span id="speakerProbability" class="value">--</span></div>
           <div class="metric"><span>Score</span><span id="speakerScore" class="value">--</span></div>
           <div class="metric"><span>Margin</span><span id="speakerMargin" class="value">--</span></div>
-          <div class="metric"><span>Reason</span><span id="speakerReason" class="value">--</span></div>
+          <div class="metric metric-wide"><span>Reason</span><span id="speakerReason" class="value">--</span></div>
         </div>
         <div id="speakerCandidates" class="candidate-list"><div class="empty">Speaker probabilities will appear while streaming.</div></div>
       </div>
@@ -632,7 +651,7 @@ function fmtSec(v) { const n = Number(v); return Number.isFinite(n) ? `${n.toFix
 function fmtMs(v) { const n = Number(v); return Number.isFinite(n) ? `${Math.round(n * 1000)}ms` : '--'; }
 function fmtProb(v) { const n = Number(v); return Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '--'; }
 function renderSpeakerCandidates(candidates) {
-  const rows = Array.isArray(candidates) ? candidates.slice(0, 6) : [];
+  const rows = Array.isArray(candidates) ? candidates.slice(0, 4) : [];
   if (!rows.length) {
     els.speakerCandidates.innerHTML = '<div class="empty">Speaker probabilities will appear while streaming.</div>';
     return;

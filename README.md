@@ -56,7 +56,7 @@ Matching defaults:
 
 ```text
 threshold = 0.3
-margin = 0.2
+margin = 0.1
 speaker_window_seconds = 3.0
 speaker_min_voiced_seconds = 0.8
 stable_after = 2 matching decisions
@@ -119,7 +119,7 @@ The script saves a JSON report to:
 data/eval/focus_librispeech_report.json
 ```
 
-By default, live speaker focus uses a 3.0 second rolling window with `speaker_threshold=0.3`, `speaker_margin=0.2`, and `speaker_min_voiced_seconds=0.8`, based on the LibriSpeech clean-speech sweep. Use `--window-seconds 0` in evaluation to score full utterances.
+By default, live speaker focus uses a 3.0 second rolling window with `speaker_threshold=0.3`, `speaker_margin=0.1`, and `speaker_min_voiced_seconds=0.8`, based on the LibriSpeech clean-speech sweep. Use `--window-seconds 0` in evaluation to score full utterances.
 
 For a grid sweep, pass comma-separated values:
 

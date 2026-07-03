@@ -42,7 +42,7 @@ class ServerConfig:
     compute_type: str = "float16"
     speaker_model: str = "pyannote/embedding"
     speaker_threshold: float = 0.3
-    speaker_margin: float = 0.2
+    speaker_margin: float = 0.1
     speaker_window_seconds: float = 3.0
     speaker_min_voiced_seconds: float = 0.8
     speaker_calibrator_path: Path | None = Path("/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
@@ -451,7 +451,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compute-type", default="float16")
     parser.add_argument("--speaker-model", default="pyannote/embedding")
     parser.add_argument("--speaker-threshold", type=float, default=0.3)
-    parser.add_argument("--speaker-margin", type=float, default=0.2)
+    parser.add_argument("--speaker-margin", type=float, default=0.1)
     parser.add_argument("--speaker-window-seconds", type=float, default=3.0)
     parser.add_argument("--speaker-min-voiced-seconds", type=float, default=0.8)
     parser.add_argument("--speaker-calibrator", default="/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
