@@ -259,36 +259,34 @@
     .gauge {
       position:relative;
       width:180px;
-      height:94px;
-      margin:2px auto 14px;
+      height:110px;
+      margin:2px auto 10px;
     }
     .gauge-arc {
       position:absolute;
-      inset:0;
-      border-radius:180px 180px 0 0;
-      background:conic-gradient(from 270deg at 50% 100%, #1c9b7f 0deg, #e7b44e 68deg, #cc4b37 128deg, transparent 129deg 360deg);
-      clip-path:polygon(0 0, 100% 0, 100% 100%, 0 100%);
+      inset:0 0 auto 0;
+      width:100%;
+      height:104px;
+      overflow:visible;
     }
-    .gauge-arc::after {
-      content:"";
-      position:absolute;
-      left:14px;
-      right:14px;
-      bottom:0;
-      height:72px;
-      border-radius:150px 150px 0 0;
-      background:var(--panel);
+    .gauge-track,
+    .gauge-value-arc {
+      fill:none;
+      stroke-width:14;
+      stroke-linecap:round;
     }
+    .gauge-track { stroke:#e8edf3; }
+    .gauge-value-arc { stroke:url(#latencyGaugeGradient); }
     .gauge-needle {
       position:absolute;
       left:50%;
-      bottom:10px;
+      bottom:12px;
       width:3px;
-      height:66px;
+      height:72px;
       border-radius:999px;
       background:#162033;
       transform-origin:50% calc(100% - 6px);
-      transform:translateX(-50%) rotate(-64deg);
+      transform:translateX(-50%) rotate(-90deg);
       transition:transform .25s ease;
       box-shadow:0 1px 2px rgba(15, 23, 42, .24);
       z-index:2;
@@ -296,7 +294,7 @@
     .gauge-hub {
       position:absolute;
       left:50%;
-      bottom:4px;
+      bottom:9px;
       width:18px;
       height:18px;
       border-radius:50%;
@@ -310,7 +308,7 @@
       position:absolute;
       left:0;
       right:0;
-      bottom:22px;
+      bottom:31px;
       text-align:center;
       font-size:22px;
       line-height:1;
@@ -535,11 +533,21 @@
       </div>
       <div class="panel-body">
         <div class="gauge" aria-label="Realtime latency gauge">
-          <div class="gauge-arc"></div>
+          <svg class="gauge-arc" viewBox="0 0 180 104" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="latencyGaugeGradient" x1="0%" y1="100%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#1c9b7f"></stop>
+                <stop offset="54%" stop-color="#e7b44e"></stop>
+                <stop offset="100%" stop-color="#cc4b37"></stop>
+              </linearGradient>
+            </defs>
+            <path class="gauge-track" d="M 14 92 A 76 76 0 0 1 166 92"></path>
+            <path class="gauge-value-arc" d="M 14 92 A 76 76 0 0 1 166 92"></path>
+          </svg>
           <div id="latencyNeedle" class="gauge-needle"></div>
           <div class="gauge-hub"></div>
           <div id="latencyGaugeValue" class="gauge-label">--</div>
-          <div class="gauge-scale"><span>0</span><span>1s</span><span>2s+</span></div>
+          <div class="gauge-scale"><span>0</span><span>1000ms</span><span>2000ms+</span></div>
         </div>
         <div class="metric"><span>E2E</span><span id="latency" class="value">--</span></div>
         <div class="metric"><span>Audio received</span><span id="audioSeconds" class="value">--</span></div>
@@ -637,6 +645,7 @@ function wsUrl(path) {
   return `${proto}//${location.host}${path}`;
 }
 function fmtSec(v) { const n = Number(v); return Number.isFinite(n) ? `${n.toFixed(3)}s` : '--'; }
+function fmtMs(v) { const n = Number(v); return Number.isFinite(n) ? `${Math.round(n * 1000)}ms` : '--'; }
 function fmtProb(v) { const n = Number(v); return Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '--'; }
 function renderSpeakerCandidates(candidates) {
   const rows = Array.isArray(candidates) ? candidates.slice(0, 6) : [];
@@ -658,12 +667,12 @@ function updateLatencyGauge(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) {
     els.latencyGaugeValue.textContent = '--';
-    els.latencyNeedle.style.transform = 'translateX(-50%) rotate(-64deg)';
+    els.latencyNeedle.style.transform = 'translateX(-50%) rotate(-90deg)';
     return;
   }
   const clamped = Math.max(0, Math.min(2, n));
-  const angle = -64 + (clamped / 2) * 128;
-  els.latencyGaugeValue.textContent = `${n.toFixed(2)}s`;
+  const angle = -90 + (clamped / 2) * 180;
+  els.latencyGaugeValue.textContent = `${Math.round(n * 1000)}ms`;
   els.latencyNeedle.style.transform = `translateX(-50%) rotate(${angle.toFixed(1)}deg)`;
 }
 function escapeHtml(text) { return String(text || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -680,7 +689,7 @@ function renderLine(item, isLive=false) {
   const speakerClass = item.is_authorized_speaker ? 'ok' : (item.speaker ? 'warn' : '');
   const kind = isLive ? `${item.kind} live` : item.kind;
   const label = isLive ? `${item.kind} live` : item.kind;
-  return `<div class="line ${kind}"><div class="meta"><span class="pill ${speakerClass}">${escapeHtml(item.speaker || item.speaker_state || 'unknown')}</span><span class="kind">${escapeHtml(label)}</span><span>${fmtSec(item.end_to_end_latency_seconds)}</span></div><div class="line-text">${escapeHtml(item.text)}</div></div>`;
+  return `<div class="line ${kind}"><div class="meta"><span class="pill ${speakerClass}">${escapeHtml(item.speaker || item.speaker_state || 'unknown')}</span><span class="kind">${escapeHtml(label)}</span><span>${fmtMs(item.end_to_end_latency_seconds)}</span></div><div class="line-text">${escapeHtml(item.text)}</div></div>`;
 }
 function renderTranscript() {
   const items = transcriptLines.slice(-80);
@@ -727,7 +736,7 @@ function renderSpeakerTurns(turns) {
 }
 function updateMetrics(event) {
   if ('end_to_end_latency_seconds' in event) {
-    els.latency.textContent = fmtSec(event.end_to_end_latency_seconds);
+    els.latency.textContent = fmtMs(event.end_to_end_latency_seconds);
     updateLatencyGauge(event.end_to_end_latency_seconds);
   }
   if ('audio_received_seconds' in event) els.audioSeconds.textContent = fmtSec(event.audio_received_seconds);
