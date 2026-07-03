@@ -1,0 +1,9 @@
+[project]
+name = "lab-realtime-stt"
+version = "0.1.0"
+description = "RealtimeSTT-based lab assistant speech prototype with enrolled speaker matching."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

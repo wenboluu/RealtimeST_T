@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.DS_Store
+
+# Local lab data and enrolled voice profiles
+data/*.mp3
+data/*.wav
+data/*.webm
+data/speaker_profiles/*.json
+!data/speaker_profiles/.gitkeep
+data/datasets/
+data/eval/

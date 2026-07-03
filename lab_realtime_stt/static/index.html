@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab Realtime STT</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#f4f6f9;
+      --panel:#ffffff;
+      --panel-soft:#f9fafc;
+      --ink:#17202f;
+      --muted:#667386;
+      --quiet:#8995a7;
+      --line:#d8e0ea;
+      --line-soft:#edf1f6;
+      --accent:#0b7566;
+      --accent-strong:#075f54;
+      --info:#315fc9;
+      --warn:#9a5300;
+      --bad:#b42318;
+      --shadow:0 1px 2px rgba(15, 23, 42, .06);
+    }
+    * { box-sizing:border-box; }
+    html, body { min-height:100%; }
+    body {
+      margin:0;
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color:var(--ink);
+      background:var(--bg);
+      letter-spacing:0;
+    }
+    button, input { font:inherit; }
+    button {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:6px;
+      min-height:36px;
+      padding:0 12px;
+      border:1px solid #b9c4d2;
+      border-radius:6px;
+      background:#fff;
+      color:var(--ink);
+      cursor:pointer;
+      font-weight:650;
+      line-height:1;
+      white-space:nowrap;
+      transition:background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+    }
+    button:hover:not(:disabled) { background:#f5f8fb; border-color:#9eabbc; }
+    button.primary { background:var(--accent); border-color:var(--accent); color:white; }
+    button.primary:hover:not(:disabled) { background:var(--accent-strong); border-color:var(--accent-strong); }
+    button.danger { border-color:#e3aaa2; color:var(--bad); }
+    button.danger:hover:not(:disabled) { background:#fff6f5; border-color:#cf7f75; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    button:focus-visible, input:focus-visible {
+      outline:3px solid rgba(49, 95, 201, .18);
+      outline-offset:2px;
+      border-color:var(--info);
+    }
+    input {
+      width:100%;
+      min-height:36px;
+      border:1px solid #b9c4d2;
+      border-radius:6px;
+      padding:0 10px;
+      background:#fff;
+      color:var(--ink);
+    }
+    input[type="file"] {
+      min-height:auto;
+      padding:8px;
+      color:var(--muted);
+      background:var(--panel-soft);
+    }
+    label, .field-label {
+      display:grid;
+      gap:6px;
+      color:var(--muted);
+      font-size:12px;
+      font-weight:700;
+    }
+    header {
+      height:60px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      padding:0 22px;
+      border-bottom:1px solid var(--line);
+      background:rgba(255, 255, 255, .96);
+    }
+    h1 { margin:0; font-size:18px; font-weight:750; }
+    h2 { margin:0; font-size:13px; font-weight:750; text-transform:uppercase; color:#3b4657; }
+    main {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) 360px;
+      gap:16px;
+      height:calc(100vh - 60px);
+      padding:16px;
+    }
+    section, aside { min-width:0; }
+    .workspace {
+      display:grid;
+      grid-template-rows:auto minmax(0, 1fr);
+      gap:12px;
+      min-height:0;
+    }
+    .sidebar {
+      display:grid;
+      grid-template-rows:auto auto minmax(0, 1fr);
+      gap:12px;
+      min-height:0;
+      overflow:hidden;
+    }
+    .panel {
+      min-width:0;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:var(--panel);
+      box-shadow:var(--shadow);
+    }
+    .toolbar {
+      display:grid;
+      grid-template-columns:auto minmax(120px, 180px) minmax(180px, 1fr);
+      align-items:end;
+      gap:14px;
+      padding:12px;
+    }
+    .button-group {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .status {
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .status-rail {
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      min-height:36px;
+      padding:0 10px;
+      border:1px solid var(--line-soft);
+      border-radius:6px;
+      background:var(--panel-soft);
+      color:#3d4a5d;
+      font-variant-numeric:tabular-nums;
+    }
+    .health {
+      display:inline-flex;
+      align-items:center;
+      min-height:30px;
+      padding:0 10px;
+      border:1px solid var(--line-soft);
+      border-radius:999px;
+      background:var(--panel-soft);
+      color:#3d4a5d;
+      white-space:nowrap;
+    }
+    .transcript-shell {
+      display:grid;
+      grid-template-rows:auto minmax(0, 1fr);
+      min-height:0;
+      overflow:hidden;
+    }
+    .panel-header {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:12px 14px;
+      border-bottom:1px solid var(--line-soft);
+    }
+    .panel-body { padding:14px; overflow:auto; }
+    .transcript {
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      min-height:0;
+      padding:14px;
+      overflow:auto;
+      background:linear-gradient(#fff, #fff) padding-box, linear-gradient(180deg, #f7f9fc, #fff) border-box;
+    }
+    .line {
+      padding:10px 12px;
+      border:1px solid var(--line-soft);
+      border-left:4px solid var(--line);
+      border-radius:6px;
+      background:#fbfcfe;
+      color:#1d2737;
+    }
+    .line.final { border-left-color:var(--accent); background:#ffffff; }
+    .line.partial, .line.stable_partial, .line.live {
+      border-left-color:var(--info);
+      background:#f7f9ff;
+      color:#2d3b55;
+    }
+    .line .meta {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-bottom:5px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+      flex-wrap:wrap;
+    }
+    .line-text {
+      font-size:15px;
+      line-height:1.5;
+      overflow-wrap:anywhere;
+    }
+    .kind {
+      color:var(--quiet);
+      font-weight:650;
+      text-transform:capitalize;
+    }
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      min-height:22px;
+      max-width:100%;
+      padding:0 8px;
+      border-radius:999px;
+      background:#eef2f7;
+      color:#3e4a5d;
+      font-size:12px;
+      font-weight:700;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .pill.ok { background:#dff5ef; color:#075a4a; }
+    .pill.warn { background:#fff1dc; color:var(--warn); }
+    .gauge {
+      position:relative;
+      width:180px;
+      height:94px;
+      margin:2px auto 14px;
+    }
+    .gauge-arc {
+      position:absolute;
+      inset:0;
+      border-radius:180px 180px 0 0;
+      background:conic-gradient(from 270deg at 50% 100%, #1c9b7f 0deg, #e7b44e 68deg, #cc4b37 128deg, transparent 129deg 360deg);
+      clip-path:polygon(0 0, 100% 0, 100% 100%, 0 100%);
+    }
+    .gauge-arc::after {
+      content:"";
+      position:absolute;
+      left:14px;
+      right:14px;
+      bottom:0;
+      height:72px;
+      border-radius:150px 150px 0 0;
+      background:var(--panel);
+    }
+    .gauge-needle {
+      position:absolute;
+      left:50%;
+      bottom:10px;
+      width:3px;
+      height:66px;
+      border-radius:999px;
+      background:#162033;
+      transform-origin:50% calc(100% - 6px);
+      transform:translateX(-50%) rotate(-64deg);
+      transition:transform .25s ease;
+      box-shadow:0 1px 2px rgba(15, 23, 42, .24);
+      z-index:2;
+    }
+    .gauge-hub {
+      position:absolute;
+      left:50%;
+      bottom:4px;
+      width:18px;
+      height:18px;
+      border-radius:50%;
+      transform:translateX(-50%);
+      background:#162033;
+      border:3px solid #fff;
+      box-shadow:0 1px 3px rgba(15, 23, 42, .22);
+      z-index:3;
+    }
+    .gauge-label {
+      position:absolute;
+      left:0;
+      right:0;
+      bottom:22px;
+      text-align:center;
+      font-size:22px;
+      line-height:1;
+      font-weight:800;
+      font-variant-numeric:tabular-nums;
+      color:#17202f;
+      z-index:4;
+    }
+    .gauge-scale {
+      display:flex;
+      justify-content:space-between;
+      position:absolute;
+      left:2px;
+      right:2px;
+      bottom:-2px;
+      color:var(--quiet);
+      font-size:11px;
+      font-weight:700;
+    }
+    .metric {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto;
+      gap:10px;
+      padding:8px 0;
+      border-bottom:1px solid var(--line-soft);
+      color:var(--muted);
+      font-size:13px;
+    }
+    .metric:first-child { padding-top:0; }
+    .metric:last-child { padding-bottom:0; border-bottom:0; }
+    .candidate-list {
+      display:grid;
+      gap:8px;
+      margin-top:12px;
+      padding-top:12px;
+      border-top:1px solid var(--line-soft);
+    }
+    .candidate-row {
+      display:grid;
+      gap:5px;
+    }
+    .candidate-head {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      color:#273449;
+      font-size:12px;
+      font-weight:750;
+    }
+    .candidate-head span:first-child {
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .candidate-track {
+      height:7px;
+      border-radius:999px;
+      background:#edf1f6;
+      overflow:hidden;
+    }
+    .candidate-fill {
+      height:100%;
+      width:0%;
+      border-radius:999px;
+      background:var(--info);
+      transition:width .2s ease;
+    }
+    .candidate-row.best .candidate-fill { background:var(--accent); }
+    .candidate-meta {
+      color:var(--quiet);
+      font-size:11px;
+      font-variant-numeric:tabular-nums;
+    }
+    .value {
+      color:#1d2737;
+      font-variant-numeric:tabular-nums;
+      font-weight:750;
+      text-align:right;
+      overflow-wrap:anywhere;
+    }
+    .speakers {
+      display:grid;
+      gap:0;
+      min-height:0;
+    }
+    .speaker-row {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto;
+      align-items:center;
+      gap:10px;
+      padding:10px 0;
+      border-bottom:1px solid var(--line-soft);
+    }
+    .speaker-row:first-child { padding-top:0; }
+    .speaker-row:last-child { padding-bottom:0; border-bottom:0; }
+    .speaker-row strong {
+      display:block;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      color:#1d2737;
+    }
+    .empty {
+      display:grid;
+      place-items:center;
+      min-height:120px;
+      color:var(--muted);
+      padding:24px 12px;
+      text-align:center;
+      font-size:13px;
+    }
+    .script-box {
+      display:grid;
+      gap:8px;
+      padding:10px;
+      border:1px solid var(--line-soft);
+      border-radius:6px;
+      background:var(--panel-soft);
+      color:#2d3b55;
+      font-size:13px;
+      line-height:1.45;
+    }
+    details.script-box summary {
+      cursor:pointer;
+      font-weight:750;
+      color:#33415c;
+    }
+    .script-text {
+      display:grid;
+      gap:8px;
+      max-height:220px;
+      overflow:auto;
+      padding-top:2px;
+    }
+    .enroll-controls { display:grid; gap:10px; }
+    .enroll-actions {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+    }
+    .enroll-actions .primary { grid-column:1 / -1; }
+    @media (max-width:1000px) {
+      main { grid-template-columns:1fr; height:auto; min-height:calc(100vh - 60px); }
+      .workspace { min-height:620px; }
+      .sidebar { overflow:visible; }
+    }
+    @media (max-width:720px) {
+      header { align-items:flex-start; height:auto; padding:14px 16px; flex-direction:column; }
+      main { padding:12px; }
+      .toolbar { grid-template-columns:1fr; align-items:stretch; }
+      .status-rail { justify-content:flex-start; }
+      .button-group, .enroll-actions { display:grid; grid-template-columns:1fr 1fr; }
+      .button-group #clearBtn { grid-column:1 / -1; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Lab Realtime STT</h1>
+  <div id="health" class="health status">Checking server...</div>
+</header>
+<main>
+  <section class="workspace">
+    <div class="toolbar panel">
+      <div class="button-group" aria-label="Stream controls">
+        <button id="startBtn" class="primary">Start</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+      <label>Language <input id="language" value="en" autocomplete="off" spellcheck="false"></label>
+      <div id="streamStatus" class="status status-rail">Idle.</div>
+    </div>
+    <div class="panel transcript-shell">
+      <div class="panel-header">
+        <h2>Transcript</h2>
+      </div>
+      <div id="transcript" class="transcript" aria-live="polite"><div class="empty">Transcript will appear here.</div></div>
+    </div>
+  </section>
+  <aside class="sidebar">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Latency</h2>
+      </div>
+      <div class="panel-body">
+        <div class="gauge" aria-label="Realtime latency gauge">
+          <div class="gauge-arc"></div>
+          <div id="latencyNeedle" class="gauge-needle"></div>
+          <div class="gauge-hub"></div>
+          <div id="latencyGaugeValue" class="gauge-label">--</div>
+          <div class="gauge-scale"><span>0</span><span>1s</span><span>2s+</span></div>
+        </div>
+        <div class="metric"><span>E2E</span><span id="latency" class="value">--</span></div>
+        <div class="metric"><span>Audio received</span><span id="audioSeconds" class="value">--</span></div>
+        <div class="metric"><span>Speaker</span><span id="speaker" class="value">unknown</span></div>
+        <div class="metric"><span>Probability</span><span id="speakerProbability" class="value">--</span></div>
+        <div class="metric"><span>Score</span><span id="speakerScore" class="value">--</span></div>
+        <div class="metric"><span>Margin</span><span id="speakerMargin" class="value">--</span></div>
+        <div class="metric"><span>Reason</span><span id="speakerReason" class="value">--</span></div>
+        <div id="speakerCandidates" class="candidate-list"><div class="empty">Speaker probabilities will appear while streaming.</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Enroll Speaker</h2>
+      </div>
+      <div class="panel-body enroll-controls">
+        <input id="speakerName" placeholder="Scientist name" autocomplete="off">
+        <details class="script-box">
+          <summary>Suggested recording script</summary>
+          <div class="script-text">
+            <p>Hello, this is my voice profile for the lab assistant. Today I am speaking clearly and naturally so the system can recognize my voice during experiments.</p>
+            <p>In the lab, I may ask about buffers, samples, pipettes, centrifuges, incubators, reagents, microscope images, temperature, pressure, and timing.</p>
+            <p>Please prepare five milliliters of sodium chloride solution, label tube A seventeen, check the pH, and start the timer for thirty seconds.</p>
+            <p>I might say short commands, longer explanations, numbers like one, two, three, nine, fifteen, forty-two, one hundred, and phrases with different sounds like fresh frozen fraction, bright blue buffer, quick calibration, and gentle vortex mixing.</p>
+            <p>This is still my normal speaking voice. The assistant should focus on me when I am talking and ignore unrelated background speech.</p>
+          </div>
+        </details>
+        <input id="speakerFile" type="file" accept="audio/*">
+        <div class="enroll-actions">
+          <button id="recordEnrollBtn">Record Enrollment</button>
+          <button id="stopEnrollBtn" disabled>Stop Recording</button>
+          <button id="uploadEnrollBtn" class="primary">Enroll</button>
+        </div>
+        <div id="enrollStatus" class="status">Use 20-30 seconds of clean speech.</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Profiles</h2>
+      </div>
+      <div class="panel-body">
+        <div id="speakers" class="speakers"></div>
+      </div>
+    </div>
+  </aside>
+</main>
+<script>
+const els = {
+  startBtn: document.getElementById('startBtn'),
+  stopBtn: document.getElementById('stopBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  transcript: document.getElementById('transcript'),
+  streamStatus: document.getElementById('streamStatus'),
+  language: document.getElementById('language'),
+  health: document.getElementById('health'),
+  latency: document.getElementById('latency'),
+  audioSeconds: document.getElementById('audioSeconds'),
+  speaker: document.getElementById('speaker'),
+  speakerProbability: document.getElementById('speakerProbability'),
+  speakerScore: document.getElementById('speakerScore'),
+  speakerMargin: document.getElementById('speakerMargin'),
+  speakerReason: document.getElementById('speakerReason'),
+  speakerCandidates: document.getElementById('speakerCandidates'),
+  latencyNeedle: document.getElementById('latencyNeedle'),
+  latencyGaugeValue: document.getElementById('latencyGaugeValue'),
+  speakers: document.getElementById('speakers'),
+  speakerName: document.getElementById('speakerName'),
+  speakerFile: document.getElementById('speakerFile'),
+  recordEnrollBtn: document.getElementById('recordEnrollBtn'),
+  stopEnrollBtn: document.getElementById('stopEnrollBtn'),
+  uploadEnrollBtn: document.getElementById('uploadEnrollBtn'),
+  enrollStatus: document.getElementById('enrollStatus'),
+};
+let socket = null;
+let mediaStream = null;
+let audioContext = null;
+let workletNode = null;
+let transcriptLines = [];
+let liveTranscript = null;
+let enrollRecorder = null;
+let enrollChunks = [];
+let enrollBlob = null;
+
+function wsUrl(path) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}${path}`;
+}
+function fmtSec(v) { const n = Number(v); return Number.isFinite(n) ? `${n.toFixed(3)}s` : '--'; }
+function fmtProb(v) { const n = Number(v); return Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '--'; }
+function renderSpeakerCandidates(candidates) {
+  const rows = Array.isArray(candidates) ? candidates.slice(0, 6) : [];
+  if (!rows.length) {
+    els.speakerCandidates.innerHTML = '<div class="empty">Speaker probabilities will appear while streaming.</div>';
+    return;
+  }
+  els.speakerCandidates.innerHTML = rows.map((candidate, index) => {
+    const probability = Number(candidate.probability);
+    const score = Number(candidate.score);
+    const hasProbability = Number.isFinite(probability);
+    const width = hasProbability ? Math.max(0, Math.min(100, probability * 100)) : Math.max(0, Math.min(100, ((score + 1) / 2) * 100));
+    const value = hasProbability ? fmtProb(probability) : (Number.isFinite(score) ? score.toFixed(3) : '--');
+    const meta = hasProbability && Number.isFinite(score) ? `cos ${score.toFixed(3)}` : 'cosine score';
+    return `<div class="candidate-row ${index === 0 ? 'best' : ''}"><div class="candidate-head"><span>${escapeHtml(candidate.name || candidate.speaker_id || 'unknown')}</span><span>${value}</span></div><div class="candidate-track"><div class="candidate-fill" style="width:${width.toFixed(1)}%"></div></div><div class="candidate-meta">${escapeHtml(meta)}</div></div>`;
+  }).join('');
+}
+function updateLatencyGauge(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    els.latencyGaugeValue.textContent = '--';
+    els.latencyNeedle.style.transform = 'translateX(-50%) rotate(-64deg)';
+    return;
+  }
+  const clamped = Math.max(0, Math.min(2, n));
+  const angle = -64 + (clamped / 2) * 128;
+  els.latencyGaugeValue.textContent = `${n.toFixed(2)}s`;
+  els.latencyNeedle.style.transform = `translateX(-50%) rotate(${angle.toFixed(1)}deg)`;
+}
+function escapeHtml(text) { return String(text || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderLine(item, isLive=false) {
+  const speakerClass = item.is_authorized_speaker ? 'ok' : (item.speaker ? 'warn' : '');
+  const kind = isLive ? `${item.kind} live` : item.kind;
+  const label = isLive ? `${item.kind} live` : item.kind;
+  return `<div class="line ${kind}"><div class="meta"><span class="pill ${speakerClass}">${escapeHtml(item.speaker || item.speaker_state || 'unknown')}</span><span class="kind">${escapeHtml(label)}</span><span>${fmtSec(item.end_to_end_latency_seconds)}</span></div><div class="line-text">${escapeHtml(item.text)}</div></div>`;
+}
+function renderTranscript() {
+  const rows = transcriptLines.slice(-80).map(item => renderLine(item));
+  if (liveTranscript) rows.push(renderLine(liveTranscript, true));
+  if (!rows.length) { els.transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>'; return; }
+  els.transcript.innerHTML = rows.join('');
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+function handleTranscriptEvent(event) {
+  if (event.kind === 'final') {
+    transcriptLines.push(event);
+    liveTranscript = null;
+  } else {
+    liveTranscript = event;
+  }
+  renderTranscript();
+  updateMetrics(event);
+}
+function updateMetrics(event) {
+  if ('end_to_end_latency_seconds' in event) {
+    els.latency.textContent = fmtSec(event.end_to_end_latency_seconds);
+    updateLatencyGauge(event.end_to_end_latency_seconds);
+  }
+  if ('audio_received_seconds' in event) els.audioSeconds.textContent = fmtSec(event.audio_received_seconds);
+  if ('speaker_state' in event) els.speaker.textContent = event.speaker ? `${event.speaker} (${event.speaker_state})` : event.speaker_state || 'unknown';
+  if ('speaker_probability' in event) els.speakerProbability.textContent = fmtProb(event.speaker_probability);
+  if ('speaker_score' in event) els.speakerScore.textContent = Number.isFinite(Number(event.speaker_score)) ? Number(event.speaker_score).toFixed(3) : '--';
+  if ('speaker_probability_margin' in event && event.speaker_probability_margin !== null) {
+    els.speakerMargin.textContent = fmtProb(event.speaker_probability_margin);
+  } else if ('speaker_margin' in event) {
+    els.speakerMargin.textContent = Number.isFinite(Number(event.speaker_margin)) ? Number(event.speaker_margin).toFixed(3) : '--';
+  }
+  if ('speaker_reason' in event) els.speakerReason.textContent = event.speaker_reason || '--';
+  if ('speaker_candidates' in event) renderSpeakerCandidates(event.speaker_candidates);
+}
+function workletSource() {
+  return `
+class PCMWorklet extends AudioWorkletProcessor {
+  constructor() { super(); this.targetRate = 16000; this.buffer = []; this.phase = 0; this.out = []; }
+  process(inputs) {
+    const input = inputs[0] && inputs[0][0];
+    if (!input) return true;
+    const ratio = sampleRate / this.targetRate;
+    for (let i = this.phase; i < input.length; i += ratio) {
+      let s = Math.max(-1, Math.min(1, input[Math.floor(i)] || 0));
+      this.out.push(s < 0 ? s * 32768 : s * 32767);
+      if (this.out.length >= 1600) {
+        const pcm = new Int16Array(this.out.splice(0, 1600));
+        this.port.postMessage(pcm.buffer, [pcm.buffer]);
+      }
+    }
+    this.phase = (this.phase + input.length) % ratio;
+    return true;
+  }
+}
+registerProcessor('pcm-worklet', PCMWorklet);
+`;
+}
+async function start() {
+  if (socket) return;
+  transcriptLines = [];
+  liveTranscript = null;
+  renderTranscript();
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioContext = new AudioContext({ sampleRate: 16000 });
+  const source = audioContext.createMediaStreamSource(mediaStream);
+  const url = URL.createObjectURL(new Blob([workletSource()], { type: 'text/javascript' }));
+  await audioContext.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
+  workletNode = new AudioWorkletNode(audioContext, 'pcm-worklet', { numberOfOutputs: 0 });
+  socket = new WebSocket(wsUrl('/ws/transcribe'));
+  socket.binaryType = 'arraybuffer';
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: 'session.start', language: els.language.value.trim() || 'en' }));
+    source.connect(workletNode);
+    workletNode.port.onmessage = e => { if (socket && socket.readyState === WebSocket.OPEN) socket.send(e.data); };
+  };
+  socket.onmessage = e => {
+    const event = JSON.parse(e.data);
+    if (event.type === 'session.ready') els.streamStatus.textContent = `Ready. Profiles: ${event.profiles}. Calibrator: ${event.speaker_calibrator ? 'on' : 'off'}`;
+    if (event.type === 'transcript') handleTranscriptEvent(event);
+    if (event.type === 'speaker.match') updateMetrics(event);
+    if (event.type === 'error') els.streamStatus.textContent = event.error || 'Server error';
+  };
+  socket.onclose = () => stop(false);
+  els.startBtn.disabled = true;
+  els.stopBtn.disabled = false;
+  els.streamStatus.textContent = 'Connecting...';
+}
+function stop(sendStop=true) {
+  if (sendStop && socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.stop' }));
+  if (workletNode) workletNode.disconnect();
+  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+  if (audioContext) audioContext.close().catch(() => {});
+  if (socket) socket.close();
+  socket = null; mediaStream = null; audioContext = null; workletNode = null;
+  els.startBtn.disabled = false; els.stopBtn.disabled = true; els.streamStatus.textContent = 'Idle.';
+}
+async function refreshSpeakers() {
+  const res = await fetch('/api/speakers');
+  const data = await res.json();
+  const speakers = data.speakers || [];
+  if (!speakers.length) { els.speakers.innerHTML = '<div class="empty">No profiles yet.</div>'; return; }
+  els.speakers.innerHTML = speakers.map(s => `<div class="speaker-row"><div><strong>${escapeHtml(s.name)}</strong><div class="status">${s.num_chunks} chunks, ${s.voiced_seconds}s</div></div><button class="danger" data-delete="${escapeHtml(s.speaker_id)}">Delete</button></div>`).join('');
+  els.speakers.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = async () => { await fetch(`/api/speakers/${btn.dataset.delete}`, { method:'DELETE' }); refreshSpeakers(); });
+}
+async function enroll(blob) {
+  const name = els.speakerName.value.trim();
+  if (!name) { els.enrollStatus.textContent = 'Speaker name is required.'; return; }
+  const audio = blob || els.speakerFile.files[0] || enrollBlob;
+  if (!audio) { els.enrollStatus.textContent = 'Choose or record enrollment audio first.'; return; }
+  const form = new FormData();
+  form.append('name', name);
+  form.append('audio', audio, audio.name || 'enrollment.webm');
+  els.enrollStatus.textContent = 'Enrolling...';
+  const res = await fetch('/api/speakers/enroll', { method:'POST', body: form });
+  const data = await res.json();
+  if (!res.ok) { els.enrollStatus.textContent = data.detail || 'Enrollment failed.'; return; }
+  els.enrollStatus.textContent = `Enrolled ${data.profile.name}.`;
+  enrollBlob = null;
+  els.speakerFile.value = '';
+  refreshSpeakers();
+}
+async function startEnrollRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  enrollChunks = [];
+  enrollRecorder = new MediaRecorder(stream);
+  enrollRecorder.ondataavailable = e => { if (e.data.size) enrollChunks.push(e.data); };
+  enrollRecorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); enrollBlob = new Blob(enrollChunks, { type: enrollRecorder.mimeType || 'audio/webm' }); els.enrollStatus.textContent = `Recorded ${(enrollBlob.size / 1024).toFixed(1)} KB. Click Enroll.`; };
+  enrollRecorder.start(500);
+  els.recordEnrollBtn.disabled = true;
+  els.stopEnrollBtn.disabled = false;
+  els.enrollStatus.textContent = 'Recording enrollment...';
+}
+function stopEnrollRecording() {
+  if (enrollRecorder && enrollRecorder.state !== 'inactive') enrollRecorder.stop();
+  els.recordEnrollBtn.disabled = false;
+  els.stopEnrollBtn.disabled = true;
+}
+els.startBtn.onclick = start;
+els.stopBtn.onclick = () => stop(true);
+els.clearBtn.onclick = () => { transcriptLines = []; liveTranscript = null; renderTranscript(); };
+els.uploadEnrollBtn.onclick = () => enroll();
+els.recordEnrollBtn.onclick = startEnrollRecording;
+els.stopEnrollBtn.onclick = stopEnrollRecording;
+fetch('/api/health').then(r => r.json()).then(h => { els.health.textContent = h.realtime_stt_importable ? `Ready: ${h.model}/${h.realtime_model} · cal ${h.speaker_calibrator ? 'on' : 'off'}` : 'RealtimeSTT not installed'; }).catch(() => els.health.textContent = 'Health check failed');
+refreshSpeakers();
+</script>
+</body>
+</html>
