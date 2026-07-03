@@ -47,14 +47,14 @@ LAB_STT_SPEAKER_WINDOW_SECONDS=3.0
 LAB_STT_SPEAKER_MIN_VOICED_SECONDS=0.8
 ```
 
-Optional calibrated speaker verifier artifacts:
+Calibrated speaker verifier artifacts:
 
 ```text
 artifacts/calibration/speaker_calibrator.joblib
 artifacts/cohorts/cohort_bank.npz
 ```
 
-If those files are absent, the server falls back to cosine speaker matching. A newly enrolled speaker does not require retraining; their profile embedding is compared against live audio through the configured matcher.
+The repository includes a tiny LibriSpeech starter calibrator and cohort bank at these default paths so fresh deployments can start with calibrated speaker probabilities. For production, retrain or replace these artifacts with data that better matches your microphones, room acoustics, and speaker population. If the files are absent, the server falls back to cosine speaker matching. A newly enrolled speaker does not require retraining; their profile embedding is compared against live audio through the configured matcher.
 
 ## Speaker Enrollment
 

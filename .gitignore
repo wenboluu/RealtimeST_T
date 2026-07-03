@@ -21,10 +21,13 @@ data/eval/
 logs/*
 !logs/.gitkeep
 
-# Local calibration/model artifacts
+# Local calibration/model artifacts. Keep the tiny LibriSpeech starter verifier
+# versioned so fresh deployments have a baseline speaker calibration.
 artifacts/**
 !artifacts/
 !artifacts/calibration/
 !artifacts/calibration/.gitkeep
+!artifacts/calibration/speaker_calibrator.joblib
 !artifacts/cohorts/
 !artifacts/cohorts/.gitkeep
+!artifacts/cohorts/cohort_bank.npz
