@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import sys
 import time
@@ -641,14 +642,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train a LibriSpeech speaker verification logistic calibrator with cohort normalization."
     )
-    parser.add_argument("--dataset-root", default="/data/wenbolu/datasets/lab-realtime-stt/librispeech")
+    parser.add_argument("--dataset-root", default=os.getenv("LAB_STT_LIBRISPEECH_ROOT", "data/datasets/librispeech"))
     parser.add_argument("--subset", default="train-clean-100", choices=LIBRISPEECH_SUBSETS)
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--speaker-model", default="pyannote/embedding")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--output-dir", default="/data/wenbolu/checkpoints/lab-realtime-stt/calibration")
-    parser.add_argument("--cohort-output", default="/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank.npz")
-    parser.add_argument("--report", default="/data/wenbolu/outputs/lab-realtime-stt/reports/librispeech_calibration_report.json")
+    parser.add_argument("--output-dir", default=os.getenv("LAB_STT_CALIBRATION_DIR", "artifacts/calibration"))
+    parser.add_argument("--cohort-output", default=os.getenv("LAB_STT_COHORT_BANK", "artifacts/cohorts/cohort_bank.npz"))
+    parser.add_argument("--report", default=os.getenv("LAB_STT_CALIBRATION_REPORT", "data/eval/librispeech_calibration_report.json"))
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--train-speakers", type=int, default=80)
     parser.add_argument("--eval-speakers", type=int, default=20)

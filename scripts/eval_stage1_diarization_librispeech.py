@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import time
@@ -256,17 +257,17 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate Stage 1 known-speaker diarization-lite on LibriSpeech streams.")
-    parser.add_argument("--dataset-root", default="/data/wenbolu/datasets/lab-realtime-stt/librispeech")
+    parser.add_argument("--dataset-root", default=os.getenv("LAB_STT_LIBRISPEECH_ROOT", "data/datasets/librispeech"))
     parser.add_argument("--subset", default="test-clean")
     parser.add_argument("--download", action="store_true")
-    parser.add_argument("--output", default="/data/wenbolu/outputs/lab-realtime-stt/reports/stage1_diarization_librispeech.json")
+    parser.add_argument("--output", default=os.getenv("LAB_STT_STAGE1_REPORT", "data/eval/stage1_diarization_librispeech.json"))
     parser.add_argument("--speaker-model", default="pyannote/embedding")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--speaker-calibrator", default="/data/wenbolu/checkpoints/lab-realtime-stt/calibration/librispeech_starter/speaker_calibrator.joblib")
-    parser.add_argument("--speaker-cohort-bank", default="/data/wenbolu/checkpoints/lab-realtime-stt/cohorts/cohort_bank_librispeech_starter.npz")
+    parser.add_argument("--speaker-calibrator", default=os.getenv("LAB_STT_SPEAKER_CALIBRATOR", "artifacts/calibration/speaker_calibrator.joblib"))
+    parser.add_argument("--speaker-cohort-bank", default=os.getenv("LAB_STT_SPEAKER_COHORT_BANK", "artifacts/cohorts/cohort_bank.npz"))
     parser.add_argument("--speaker-probability-threshold", type=float)
     parser.add_argument("--speaker-threshold", type=float, default=0.3)
-    parser.add_argument("--speaker-margin", type=float, default=0.2)
+    parser.add_argument("--speaker-margin", type=float, default=0.1)
     parser.add_argument("--window-seconds", type=float, default=3.0)
     parser.add_argument("--hop-seconds", type=float, default=0.75)
     parser.add_argument("--min-voiced-seconds", type=float, default=0.8)
