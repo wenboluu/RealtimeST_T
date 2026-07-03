@@ -2,7 +2,9 @@
 
 Realtime lab assistant speech prototype built on [RealtimeSTT](https://github.com/KoljaB/RealtimeSTT) with manual speaker enrollment.
 
-This replaces the earlier WhisperX realtime prototype for live use. The live path focuses on low-latency partial/final transcription plus known-speaker verification. It does not do word alignment, trigger-word enrollment, or live diarization.
+This replaces the earlier WhisperX realtime prototype for live use. The live path focuses on low-latency partial/final transcription plus known-speaker verification. It does not do word alignment or trigger-word enrollment.
+
+Stage 1 speaker handling is intentionally simple: enrolled voices can be labeled by name, every non-enrolled voice is grouped as `Unknown`, and the UI breaks the transcript whenever the active speaker changes. This is diarization-lite rather than full overlap-separating diarization; overlapped speech is flagged as possible overlap, not separated into multiple transcripts.
 
 ## Setup
 
@@ -61,6 +63,17 @@ stable_after = 2 matching decisions
 ```
 
 The speaker label is only a verification/routing signal. If audio is noisy, too short, or likely overlapping, it should remain `unknown` rather than forcing a wrong speaker.
+
+Speaker-turn tracking defaults:
+
+```text
+speaker_turn_switch_after = 2 stable speaker decisions
+speaker_turn_min_seconds = 0.8
+speaker_overlap_probability = 0.35
+speaker_overlap_margin = 0.25
+```
+
+Use `--no-speaker-turns` to disable transcript breaks, or tune `--speaker-turn-switch-after`, `--speaker-turn-min-seconds`, `--speaker-overlap-probability`, and `--speaker-overlap-margin` for a specific room.
 
 The live server automatically uses the LibriSpeech starter logistic calibrator when these files exist:
 
@@ -125,6 +138,27 @@ python scripts/eval_focus_librispeech.py \
 ```
 
 Metrics include positive top-1 accuracy, positive unknown rate, positive false-speaker rate, and background false-accept rate. Sweep summaries are written under `sweeps.results`, with the script's conservative zero-false-accept recommendation under `sweeps.recommended`.
+
+## Stage 1 Speaker-Turn Evaluation
+
+To test the live speaker-turn path without microphone or browser effects, run the LibriSpeech streaming-style evaluator. It enrolls a few known speakers, reserves at least one speaker as `Unknown`, streams synthetic conversations through the same speaker matcher and turn tracker, and reports both robustness and per-window matching latency.
+
+```bash
+python scripts/eval_stage1_diarization_librispeech.py \
+  --subset test-clean \
+  --dataset-root /data/wenbolu/datasets/lab-realtime-stt/librispeech \
+  --known-speakers 3 \
+  --unknown-speakers 1 \
+  --rounds 2 \
+  --eval-utterances 2 \
+  --enrollment-seconds 10 \
+  --hop-seconds 0.75 \
+  --window-seconds 3.0 \
+  --augmentations clean,noise,reverb \
+  --output /data/wenbolu/outputs/lab-realtime-stt/reports/stage1_diarization_librispeech.json
+```
+
+The latency number here is only the speaker-matching stage. Browser capture, WebSocket transport, and ASR decoding are measured live in the WebUI latency gauge.
 
 ## Speaker Calibration Training
 
