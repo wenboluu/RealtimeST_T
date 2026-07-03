@@ -110,7 +110,7 @@
     }
     .sidebar {
       display:grid;
-      grid-template-rows:auto auto minmax(0, 1fr);
+      grid-template-rows:auto auto auto minmax(0, 1fr);
       gap:12px;
       min-height:0;
       overflow:hidden;
@@ -186,6 +186,24 @@
       padding:14px;
       overflow:auto;
       background:linear-gradient(#fff, #fff) padding-box, linear-gradient(180deg, #f7f9fc, #fff) border-box;
+    }
+    .turn-break {
+      display:flex;
+      align-items:center;
+      gap:10px;
+      margin:4px 0 0;
+      color:#526174;
+      font-size:12px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:0;
+    }
+    .turn-break::before,
+    .turn-break::after {
+      content:"";
+      height:1px;
+      background:var(--line-soft);
+      flex:1;
     }
     .line {
       padding:10px 12px;
@@ -368,6 +386,42 @@
       font-size:11px;
       font-variant-numeric:tabular-nums;
     }
+    .turn-list {
+      display:grid;
+      gap:8px;
+      max-height:220px;
+      overflow:auto;
+    }
+    .turn-row {
+      display:grid;
+      grid-template-columns:auto minmax(0, 1fr) auto;
+      align-items:center;
+      gap:8px;
+      padding:8px 0;
+      border-bottom:1px solid var(--line-soft);
+      color:#273449;
+      font-size:12px;
+    }
+    .turn-row:last-child { border-bottom:0; }
+    .turn-dot {
+      width:9px;
+      height:9px;
+      border-radius:50%;
+      background:#a8b3c3;
+    }
+    .turn-row.known .turn-dot { background:var(--accent); }
+    .turn-row.overlap .turn-dot { background:var(--warn); }
+    .turn-name {
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      font-weight:750;
+    }
+    .turn-time {
+      color:var(--quiet);
+      font-variant-numeric:tabular-nums;
+    }
     .value {
       color:#1d2737;
       font-variant-numeric:tabular-nums;
@@ -499,6 +553,14 @@
     </div>
     <div class="panel">
       <div class="panel-header">
+        <h2>Speaker Turns</h2>
+      </div>
+      <div class="panel-body">
+        <div id="speakerTurns" class="turn-list"><div class="empty">Speaker turns will appear while streaming.</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
         <h2>Enroll Speaker</h2>
       </div>
       <div class="panel-body enroll-controls">
@@ -549,6 +611,7 @@ const els = {
   speakerMargin: document.getElementById('speakerMargin'),
   speakerReason: document.getElementById('speakerReason'),
   speakerCandidates: document.getElementById('speakerCandidates'),
+  speakerTurns: document.getElementById('speakerTurns'),
   latencyNeedle: document.getElementById('latencyNeedle'),
   latencyGaugeValue: document.getElementById('latencyGaugeValue'),
   speakers: document.getElementById('speakers'),
@@ -604,6 +667,15 @@ function updateLatencyGauge(value) {
   els.latencyNeedle.style.transform = `translateX(-50%) rotate(${angle.toFixed(1)}deg)`;
 }
 function escapeHtml(text) { return String(text || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function turnKey(item) {
+  return item && item.speaker_turn_id ? `turn:${item.speaker_turn_id}` : `speaker:${item.speaker || item.speaker_state || 'unknown'}`;
+}
+function renderTurnBreak(item) {
+  const name = item.speaker_turn_speaker || item.speaker || item.speaker_state || 'Unknown';
+  const start = Number(item.speaker_turn_start);
+  const label = Number.isFinite(start) ? `${name} · ${start.toFixed(1)}s` : name;
+  return `<div class="turn-break">${escapeHtml(label)}</div>`;
+}
 function renderLine(item, isLive=false) {
   const speakerClass = item.is_authorized_speaker ? 'ok' : (item.speaker ? 'warn' : '');
   const kind = isLive ? `${item.kind} live` : item.kind;
@@ -611,8 +683,16 @@ function renderLine(item, isLive=false) {
   return `<div class="line ${kind}"><div class="meta"><span class="pill ${speakerClass}">${escapeHtml(item.speaker || item.speaker_state || 'unknown')}</span><span class="kind">${escapeHtml(label)}</span><span>${fmtSec(item.end_to_end_latency_seconds)}</span></div><div class="line-text">${escapeHtml(item.text)}</div></div>`;
 }
 function renderTranscript() {
-  const rows = transcriptLines.slice(-80).map(item => renderLine(item));
-  if (liveTranscript) rows.push(renderLine(liveTranscript, true));
+  const items = transcriptLines.slice(-80);
+  if (liveTranscript) items.push({...liveTranscript, __live: true});
+  const rows = [];
+  let lastKey = null;
+  for (const item of items) {
+    const key = turnKey(item);
+    if (key !== lastKey) rows.push(renderTurnBreak(item));
+    rows.push(renderLine(item, Boolean(item.__live)));
+    lastKey = key;
+  }
   if (!rows.length) { els.transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>'; return; }
   els.transcript.innerHTML = rows.join('');
   els.transcript.scrollTop = els.transcript.scrollHeight;
@@ -626,6 +706,24 @@ function handleTranscriptEvent(event) {
   }
   renderTranscript();
   updateMetrics(event);
+}
+function renderSpeakerTurns(turns) {
+  const rows = Array.isArray(turns) ? turns.slice(-12) : [];
+  if (!rows.length) {
+    els.speakerTurns.innerHTML = '<div class="empty">Speaker turns will appear while streaming.</div>';
+    return;
+  }
+  els.speakerTurns.innerHTML = rows.map(turn => {
+    const classes = ['turn-row'];
+    if (turn.known) classes.push('known');
+    if (turn.overlap_possible) classes.push('overlap');
+    const start = Number(turn.start);
+    const end = Number(turn.end);
+    const time = Number.isFinite(start) && Number.isFinite(end) ? `${start.toFixed(1)}-${end.toFixed(1)}s` : '--';
+    const prob = Number.isFinite(Number(turn.probability)) ? ` · ${fmtProb(turn.probability)}` : '';
+    return `<div class="${classes.join(' ')}"><span class="turn-dot"></span><span class="turn-name">${escapeHtml(turn.speaker || 'Unknown')}${prob}</span><span class="turn-time">${time}</span></div>`;
+  }).join('');
+  els.speakerTurns.scrollTop = els.speakerTurns.scrollHeight;
 }
 function updateMetrics(event) {
   if ('end_to_end_latency_seconds' in event) {
@@ -643,6 +741,7 @@ function updateMetrics(event) {
   }
   if ('speaker_reason' in event) els.speakerReason.textContent = event.speaker_reason || '--';
   if ('speaker_candidates' in event) renderSpeakerCandidates(event.speaker_candidates);
+  if ('speaker_turns' in event) renderSpeakerTurns(event.speaker_turns);
 }
 function workletSource() {
   return `
@@ -688,7 +787,7 @@ async function start() {
   };
   socket.onmessage = e => {
     const event = JSON.parse(e.data);
-    if (event.type === 'session.ready') els.streamStatus.textContent = `Ready. Profiles: ${event.profiles}. Calibrator: ${event.speaker_calibrator ? 'on' : 'off'}`;
+    if (event.type === 'session.ready') els.streamStatus.textContent = `Ready. Profiles: ${event.profiles}. Calibrator: ${event.speaker_calibrator ? 'on' : 'off'}. Turns: ${event.speaker_turns_enabled ? 'on' : 'off'}`;
     if (event.type === 'transcript') handleTranscriptEvent(event);
     if (event.type === 'speaker.match') updateMetrics(event);
     if (event.type === 'error') els.streamStatus.textContent = event.error || 'Server error';
